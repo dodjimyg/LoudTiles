@@ -1,1 +1,732 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LOUDTILES — real-time film</title>
+<style>
+  :root { color-scheme: dark; }
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:"Courier New",ui-monospace,monospace;-webkit-font-smoothing:none;}
+  #stage{position:fixed;inset:0;width:100%;height:100%;display:block;background:#000;}
+  #gl{display:none;}
+  /* UI chrome */
+  #ui{position:fixed;left:12px;top:12px;z-index:10;display:flex;gap:8px;align-items:center;
+      font-size:12px;letter-spacing:.08em;color:#ffb37a;text-shadow:0 0 6px #ff4d0080;user-select:none;}
+  #ui button{background:#1a0d06cc;border:1px solid #ff6a2e66;color:#ffcaa0;padding:6px 10px;
+      font:inherit;letter-spacing:.08em;cursor:pointer;border-radius:2px;text-transform:uppercase;}
+  #ui button:hover{background:#3a1608cc;border-color:#ff8a4e;}
+  #ui button.rec{color:#ff5a4a;border-color:#ff5a4a99;}
+  #ui .dot{width:9px;height:9px;border-radius:50%;background:#ff2a1a;box-shadow:0 0 8px #ff2a1a;display:inline-block;}
+  #hint{position:fixed;right:12px;bottom:10px;z-index:10;font-size:10px;color:#ff9a6a99;letter-spacing:.1em;text-align:right;user-select:none;}
+  @keyframes blink{50%{opacity:.25}}
+  .blink{animation:blink 1s steps(2) infinite;}
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<canvas id="gl"></canvas>
 
+<div id="ui">
+  <button id="rec">● Rec</button>
+  <button id="shot">Photo</button>
+  <button id="fs">Plein écran</button>
+  <span id="status"></span>
+</div>
+<div id="hint">LOUDTILES · thermal FPS film · glisse la souris pour incliner</div>
+
+<script>
+/* =========================================================================
+   LOUDTILES — un "film" temps réel dans un moteur maison (WebGL).
+   Esthétique hybride Harmony Korine : imagerie thermique (Aggro Dr1ft)
+   + HUD de jeu vidéo façon livestream FPS (Baby Invasion).
+   Tout est procédural. Aucune dépendance externe.
+   ========================================================================= */
+
+//////////////////// WebGL bootstrap ////////////////////
+const glCanvas = document.getElementById('gl');
+const gl = glCanvas.getContext('webgl', {antialias:true, preserveDrawingBuffer:true, alpha:false});
+if(!gl){ document.body.innerHTML = "<p style='color:#f60;font-family:monospace;padding:20px'>WebGL non disponible sur ce navigateur.</p>"; }
+
+const stage = document.getElementById('stage');
+const ctx = stage.getContext('2d');
+
+let W=0,H=0, DPR=1;
+function resize(){
+  DPR = Math.min(window.devicePixelRatio||1, 2);
+  W = Math.floor(window.innerWidth  * DPR);
+  H = Math.floor(window.innerHeight * DPR);
+  glCanvas.width=W; glCanvas.height=H;
+  stage.width=W; stage.height=H;
+  stage.style.width=window.innerWidth+'px';
+  stage.style.height=window.innerHeight+'px';
+  gl.viewport(0,0,W,H);
+  buildTargets();
+}
+window.addEventListener('resize', resize);
+
+//////////////////// GL helpers ////////////////////
+function sh(type,src){
+  const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)+"\n"+src);
+  return s;
+}
+function prog(vs,fs){
+  const p=gl.createProgram();
+  gl.attachShader(p,sh(gl.VERTEX_SHADER,vs));
+  gl.attachShader(p,sh(gl.FRAGMENT_SHADER,fs));
+  gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+
+//////////////////// mat4 math ////////////////////
+const M = {
+  ident:()=>[1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1],
+  mul:(a,b)=>{const o=new Array(16);
+    for(let r=0;r<4;r++)for(let c=0;c<4;c++){let s=0;for(let k=0;k<4;k++)s+=a[k*4+c]*b[r*4+k];o[r*4+c]=s;}return o;},
+  persp:(fov,asp,n,f)=>{const t=1/Math.tan(fov/2);
+    return [t/asp,0,0,0, 0,t,0,0, 0,0,(f+n)/(n-f),-1, 0,0,(2*f*n)/(n-f),0];},
+  lookAt:(e,c,u)=>{
+    const z=norm(sub(e,c)); const x=norm(cross(u,z)); const y=cross(z,x);
+    return [x[0],y[0],z[0],0, x[1],y[1],z[1],0, x[2],y[2],z[2],0,
+            -dot(x,e),-dot(y,e),-dot(z,e),1];}
+};
+const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]];
+const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const len=a=>Math.hypot(a[0],a[1],a[2]);
+const norm=a=>{const l=len(a)||1;return [a[0]/l,a[1]/l,a[2]/l];};
+
+//////////////////// Scene geometry: a thermal city corridor ////////////////////
+// One "segment" of length SEG that we tile infinitely along -Z.
+const SEG = 60;
+function rand(seed){ // deterministic pseudo-random per index
+  let x=Math.sin(seed*127.1+311.7)*43758.5453; return x-Math.floor(x);
+}
+function buildCity(){
+  const pos=[], nrm=[], heat=[]; // heat = base material heat seed per box
+  function box(cx,cy,cz, sx,sy,sz, h){
+    const hx=sx/2,hy=sy/2,hz=sz/2;
+    // 6 faces
+    const faces=[
+      // +X
+      [[hx,-hy,-hz],[hx,hy,-hz],[hx,hy,hz],[hx,-hy,hz],[1,0,0]],
+      [[-hx,-hy,hz],[-hx,hy,hz],[-hx,hy,-hz],[-hx,-hy,-hz],[-1,0,0]],
+      [[-hx,hy,-hz],[-hx,hy,hz],[hx,hy,hz],[hx,hy,-hz],[0,1,0]],
+      [[-hx,-hy,hz],[-hx,-hy,-hz],[hx,-hy,-hz],[hx,-hy,hz],[0,-1,0]],
+      [[-hx,-hy,hz],[hx,-hy,hz],[hx,hy,hz],[-hx,hy,hz],[0,0,1]],
+      [[hx,-hy,-hz],[-hx,-hy,-hz],[-hx,hy,-hz],[hx,hy,-hz],[0,0,-1]],
+    ];
+    for(const f of faces){
+      const [a,b,c,d,n]=f;
+      const quad=[a,b,c, a,c,d];
+      for(const v of quad){
+        pos.push(cx+v[0], cy+v[1], cz+v[2]);
+        nrm.push(n[0],n[1],n[2]);
+        heat.push(h);
+      }
+    }
+  }
+  // ground slab
+  box(0,-0.5,-SEG/2, 200, 1, SEG, 0.10);
+  // buildings on both sides of a road
+  const N=9;
+  for(let i=0;i<N;i++){
+    const t=i/N;
+    const z=-i*(SEG/N) - 3;
+    for(const side of [-1,1]){
+      const w=6+rand(i*7+side*3)*10;
+      const d=6+rand(i*13+side)*10;
+      const hgt=10+rand(i*3+side*11)*40;
+      const x=side*(14+rand(i+side*5)*10);
+      box(x, hgt/2, z, w, hgt, d, 0.14+rand(i*17+side)*0.05);
+      // a few hot "window" blocks embedded (warm interiors)
+      const wcnt=2+((rand(i*5+side)*3)|0);
+      for(let k=0;k<wcnt;k++){
+        const wy=2+rand(i*9+k+side)*(hgt-4);
+        box(x+side*(w/2+0.05), wy, z+ (rand(i+k*3)*2-1)*d*0.35, 0.3, 1.4+rand(k)*1.5, 1.4, 0.62+rand(i*3+k)*0.25);
+      }
+    }
+  }
+  return {
+    pos:new Float32Array(pos), nrm:new Float32Array(nrm), heat:new Float32Array(heat),
+    count: pos.length/3
+  };
+}
+const city = buildCity();
+
+const cityVAO = {
+  pos: gl.createBuffer(), nrm: gl.createBuffer(), heat: gl.createBuffer()
+};
+gl.bindBuffer(gl.ARRAY_BUFFER, cityVAO.pos);  gl.bufferData(gl.ARRAY_BUFFER, city.pos,  gl.STATIC_DRAW);
+gl.bindBuffer(gl.ARRAY_BUFFER, cityVAO.nrm);  gl.bufferData(gl.ARRAY_BUFFER, city.nrm,  gl.STATIC_DRAW);
+gl.bindBuffer(gl.ARRAY_BUFFER, cityVAO.heat); gl.bufferData(gl.ARRAY_BUFFER, city.heat, gl.STATIC_DRAW);
+
+//////////////////// Hot figures (billboards): bodies read as bright in IR ////////////////////
+// Simple quad, instanced by drawing repeatedly with different uniforms.
+const quad = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, 1,1, -1,-1, 1,1, -1,1]), gl.STATIC_DRAW);
+
+const FIG_N = 22;
+const figures = [];
+for(let i=0;i<FIG_N;i++){
+  figures.push({
+    x:(rand(i*3)*2-1)*9,
+    zoff: -rand(i*5)*SEG*3,
+    speed: 0.6+rand(i*7)*1.6,
+    phase: rand(i*11)*6.28,
+    scale: 1.6+rand(i*13)*1.1,
+    heat: 0.78+rand(i*17)*0.22
+  });
+}
+
+//////////////////// Programs ////////////////////
+// -- thermal palette shared GLSL --
+const PALETTE = `
+vec3 thermal(float t){
+  t = clamp(t,0.0,1.0);
+  vec3 c0=vec3(0.02,0.02,0.06);      // cold: near black-blue
+  vec3 c1=vec3(0.13,0.02,0.28);      // deep violet
+  vec3 c2=vec3(0.55,0.03,0.35);      // magenta
+  vec3 c3=vec3(0.90,0.12,0.05);      // red
+  vec3 c4=vec3(1.00,0.45,0.02);      // orange
+  vec3 c5=vec3(1.00,0.85,0.20);      // yellow
+  vec3 c6=vec3(1.00,1.00,0.98);      // white hot
+  vec3 c;
+  if(t<0.16)      c=mix(c0,c1, t/0.16);
+  else if(t<0.34) c=mix(c1,c2,(t-0.16)/0.18);
+  else if(t<0.52) c=mix(c2,c3,(t-0.34)/0.18);
+  else if(t<0.68) c=mix(c3,c4,(t-0.52)/0.16);
+  else if(t<0.85) c=mix(c4,c5,(t-0.68)/0.17);
+  else            c=mix(c5,c6,(t-0.85)/0.15);
+  return c;
+}
+float hash(vec3 p){ return fract(sin(dot(p, vec3(12.9898,78.233,37.719)))*43758.5453); }
+float noise3(vec3 p){
+  vec3 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+  float n=mix(mix(mix(hash(i+vec3(0,0,0)),hash(i+vec3(1,0,0)),f.x),
+                  mix(hash(i+vec3(0,1,0)),hash(i+vec3(1,1,0)),f.x),f.y),
+              mix(mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x),
+                  mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x),f.y),f.z);
+  return n;
+}`;
+
+// -- city program: outputs thermal color + heat in alpha for bloom --
+const cityProg = prog(`
+attribute vec3 aPos; attribute vec3 aNrm; attribute float aHeat;
+uniform mat4 uVP; uniform vec3 uCam; uniform float uTime;
+varying vec3 vW; varying vec3 vN; varying float vHeat; varying float vDist;
+void main(){
+  vW=aPos; vN=aNrm; vHeat=aHeat;
+  vec4 clip=uVP*vec4(aPos,1.0);
+  vDist=length(aPos-uCam);
+  gl_Position=clip;
+}`,
+`precision highp float;
+`+PALETTE+`
+varying vec3 vW; varying vec3 vN; varying float vHeat; varying float vDist;
+uniform vec3 uCam; uniform float uTime; uniform float uIntensity;
+void main(){
+  vec3 vd=normalize(uCam-vW);
+  float facing=clamp(dot(normalize(vN),vd),0.0,1.0);
+  // material heat: base + edges warmer where facing + slow flicker noise
+  float n = noise3(vW*0.15 + vec3(0.0,uTime*0.05,0.0));
+  float heat = vHeat;
+  heat += facing*0.10;
+  heat += n*0.12;
+  heat += smoothstep(20.0,0.0,vW.y)*0.05; // ground warmth near base
+  // atmospheric cooling with distance (IR haze)
+  float fog=exp(-vDist*0.006);
+  heat = mix(0.05, heat, fog);
+  heat *= (0.9+0.2*uIntensity);
+  gl_FragColor=vec4(thermal(heat), clamp(heat-0.55,0.0,1.0));
+}`);
+const cL = {
+  aPos:gl.getAttribLocation(cityProg,'aPos'),
+  aNrm:gl.getAttribLocation(cityProg,'aNrm'),
+  aHeat:gl.getAttribLocation(cityProg,'aHeat'),
+  uVP:gl.getUniformLocation(cityProg,'uVP'),
+  uCam:gl.getUniformLocation(cityProg,'uCam'),
+  uTime:gl.getUniformLocation(cityProg,'uTime'),
+  uIntensity:gl.getUniformLocation(cityProg,'uIntensity'),
+};
+
+// -- figure (billboard) program --
+const figProg = prog(`
+attribute vec2 aCorner;
+uniform mat4 uVP; uniform vec3 uCenter; uniform vec3 uRight; uniform vec3 uUp;
+uniform float uScale;
+varying vec2 vUv;
+void main(){
+  vUv=aCorner;
+  vec3 wp=uCenter + uRight*aCorner.x*uScale*0.5 + uUp*aCorner.y*uScale;
+  gl_Position=uVP*vec4(wp,1.0);
+}`,
+`precision highp float;
+`+PALETTE+`
+varying vec2 vUv;
+uniform float uHeat; uniform float uTime; uniform float uSeed;
+void main(){
+  // body-ish blob: narrow vertical gaussian + head
+  float bodyX=exp(-vUv.x*vUv.x*6.0);
+  float bodyY=smoothstep(1.0,-1.0,vUv.y);
+  float head=exp(-((vUv.x*vUv.x)*10.0+ (vUv.y-0.8)*(vUv.y-0.8)*14.0));
+  float m=clamp(bodyX*bodyY+head,0.0,1.0);
+  float pulse=0.85+0.15*sin(uTime*3.0+uSeed*6.28);
+  float heat=uHeat*pulse*m;
+  if(m<0.02) discard;
+  gl_FragColor=vec4(thermal(heat)*m, m*clamp(heat-0.4,0.0,1.0));
+}`);
+const fL={
+  aCorner:gl.getAttribLocation(figProg,'aCorner'),
+  uVP:gl.getUniformLocation(figProg,'uVP'),
+  uCenter:gl.getUniformLocation(figProg,'uCenter'),
+  uRight:gl.getUniformLocation(figProg,'uRight'),
+  uUp:gl.getUniformLocation(figProg,'uUp'),
+  uScale:gl.getUniformLocation(figProg,'uScale'),
+  uHeat:gl.getUniformLocation(figProg,'uHeat'),
+  uTime:gl.getUniformLocation(figProg,'uTime'),
+  uSeed:gl.getUniformLocation(figProg,'uSeed'),
+};
+
+// -- post-process program (grain, aberration, scanlines, vignette, bloom-lite) --
+const postProg = prog(`
+attribute vec2 p; varying vec2 uv;
+void main(){ uv=p*0.5+0.5; gl_Position=vec4(p,0.0,1.0); }`,
+`precision highp float;
+varying vec2 uv;
+uniform sampler2D uTex; uniform vec2 uRes; uniform float uTime; uniform float uIntensity;
+float hash(vec2 p){return fract(sin(dot(p,vec2(41.13,289.7)))*43758.5);}
+void main(){
+  vec2 d=uv-0.5;
+  float r2=dot(d,d);
+  // chromatic aberration grows toward edges
+  float ab=(0.0016+0.006*r2)*(1.0+uIntensity);
+  vec3 col;
+  col.r=texture2D(uTex, uv - d*ab).r;
+  col.g=texture2D(uTex, uv).g;
+  col.b=texture2D(uTex, uv + d*ab).b;
+  // cheap bloom: sample bright neighbours (alpha=heat mask)
+  vec3 bloom=vec3(0.0); float bw=0.0;
+  for(int i=-2;i<=2;i++){
+    for(int j=-2;j<=2;j++){
+      vec2 o=vec2(float(i),float(j))/uRes*2.5;
+      vec4 s=texture2D(uTex, uv+o);
+      float w=s.a;
+      bloom+=s.rgb*w; bw+=w;
+    }
+  }
+  if(bw>0.0) col += bloom/bw * 0.35 * clamp(bw*0.06,0.0,1.0);
+  // scanlines
+  float sl=0.92+0.08*sin(uv.y*uRes.y*0.7);
+  col*=sl;
+  // grain
+  float g=hash(uv*uRes+fract(uTime)*133.0);
+  col+=(g-0.5)*0.09;
+  // vignette
+  col*=smoothstep(0.95,0.25,r2*1.7);
+  // slight lift + saturate
+  col=pow(max(col,0.0),vec3(0.92));
+  gl_FragColor=vec4(col,1.0);
+}`);
+const pL={
+  p:gl.getAttribLocation(postProg,'p'),
+  uTex:gl.getUniformLocation(postProg,'uTex'),
+  uRes:gl.getUniformLocation(postProg,'uRes'),
+  uTime:gl.getUniformLocation(postProg,'uTime'),
+  uIntensity:gl.getUniformLocation(postProg,'uIntensity'),
+};
+const fsq = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, fsq);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, 1,1, -1,-1, 1,1, -1,1]), gl.STATIC_DRAW);
+
+//////////////////// Render target (scene -> texture) ////////////////////
+let fbo, tex, depth;
+function buildTargets(){
+  if(tex) gl.deleteTexture(tex);
+  if(fbo) gl.deleteFramebuffer(fbo);
+  if(depth) gl.deleteRenderbuffer(depth);
+  tex=gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,W,H,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  depth=gl.createRenderbuffer();
+  gl.bindRenderbuffer(gl.RENDERBUFFER,depth);
+  gl.renderbufferStorage(gl.RENDERBUFFER,gl.DEPTH_COMPONENT16,W,H);
+  fbo=gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
+  gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.RENDERBUFFER,depth);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+}
+
+//////////////////// Camera / "director" ////////////////////
+let mouseX=0, mouseY=0;
+window.addEventListener('mousemove',e=>{
+  mouseX=(e.clientX/window.innerWidth -0.5);
+  mouseY=(e.clientY/window.innerHeight-0.5);
+});
+
+// Acts: change speed / intensity / on-screen title over the film's runtime.
+const ACTS=[
+  {t:0,   name:"ACT I // DESCENT",        speed:10, intensity:0.4},
+  {t:16,  name:"ACT II // THE NURSERY",   speed:16, intensity:0.8},
+  {t:34,  name:"ACT III // SATURATION",   speed:24, intensity:1.3},
+  {t:52,  name:"ACT IV // AFTERGLOW",     speed:8,  intensity:0.6},
+  {t:68,  name:"ACT V // LOOP",           speed:14, intensity:1.0},
+];
+function actAt(time){
+  let a=ACTS[0];
+  for(const x of ACTS){ if(time>=x.t) a=x; }
+  return a;
+}
+
+let camZ=0;
+function computeCamera(time, dt){
+  const act=actAt(time%84);
+  camZ -= act.speed*dt;
+  const shake = act.intensity;
+  const t=time;
+  const drift=[
+    Math.sin(t*0.31)*3.0 + mouseX*8.0,
+    6.0 + Math.sin(t*0.7)*0.7 + Math.sin(t*11.0)*0.06*shake - mouseY*4.0,
+    camZ
+  ];
+  // look forward (-Z) with yaw/pitch drift + micro shake
+  const yaw = Math.sin(t*0.23)*0.18 + mouseX*0.6 + Math.sin(t*13.0)*0.01*shake;
+  const pitch = Math.sin(t*0.37)*0.05 - mouseY*0.5;
+  const dir=[Math.sin(yaw)*Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw)*Math.cos(pitch)];
+  const center=[drift[0]+dir[0], drift[1]+dir[1], drift[2]+dir[2]];
+  return {eye:drift, center, act};
+}
+
+//////////////////// Draw scene to texture ////////////////////
+function drawScene(time, cam, VP){
+  gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);
+  gl.viewport(0,0,W,H);
+  gl.clearColor(0.01,0.01,0.03,1);
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthFunc(gl.LEQUAL);
+  gl.disable(gl.BLEND);
+
+  // --- city, tiled 4 segments deep around the camera ---
+  gl.useProgram(cityProg);
+  gl.uniformMatrix4fv(cL.uVP,false,VP);
+  gl.uniform3fv(cL.uCam,cam.eye);
+  gl.uniform1f(cL.uTime,time);
+  gl.uniform1f(cL.uIntensity,cam.act.intensity);
+  gl.bindBuffer(gl.ARRAY_BUFFER,cityVAO.pos);  gl.enableVertexAttribArray(cL.aPos);  gl.vertexAttribPointer(cL.aPos,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER,cityVAO.nrm);  gl.enableVertexAttribArray(cL.aNrm);  gl.vertexAttribPointer(cL.aNrm,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER,cityVAO.heat); gl.enableVertexAttribArray(cL.aHeat); gl.vertexAttribPointer(cL.aHeat,1,gl.FLOAT,false,0,0);
+  const baseSeg=Math.floor(cam.eye[2]/SEG);
+  // NB: uVP already contains world; we translate geometry by editing VP per tile is costly,
+  // instead we rely on the corridor repeating: shift camera into a single segment via modelZ.
+  // Simpler: draw the same buffer 5 times offset in Z by building a translated VP.
+  for(let s=1;s>=-3;s--){
+    const zoff=(baseSeg+s)*SEG;
+    const model=[1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,zoff,1];
+    const MVP=M.mul(VP,model);
+    gl.uniformMatrix4fv(cL.uVP,false,MVP);
+    gl.drawArrays(gl.TRIANGLES,0,city.count);
+  }
+
+  // --- hot figures (additive billboards) ---
+  gl.useProgram(figProg);
+  gl.uniformMatrix4fv(fL.uVP,false,VP);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA,gl.ONE);
+  gl.depthMask(false);
+  const camDir=norm(sub(cam.center,cam.eye));
+  const right=norm(cross(camDir,[0,1,0]));
+  const up=cross(right,camDir);
+  gl.bindBuffer(gl.ARRAY_BUFFER,quad);
+  gl.enableVertexAttribArray(fL.aCorner);
+  gl.vertexAttribPointer(fL.aCorner,2,gl.FLOAT,false,0,0);
+  gl.uniform3fv(fL.uRight,right);
+  gl.uniform3fv(fL.uUp,up);
+  for(let i=0;i<figures.length;i++){
+    const f=figures[i];
+    // walk along corridor, recycle within a window ahead of camera
+    let z = f.zoff - (time*f.speed)%(SEG*4);
+    // keep near camera: shift into window [camZ-SEG*4, camZ]
+    const span=SEG*4;
+    let rel=((z-cam.eye[2])%span+span)%span; // 0..span ahead(behind)
+    z=cam.eye[2]-rel;
+    const x=f.x + Math.sin(time*0.5+f.phase)*1.5;
+    const y=f.scale;
+    gl.uniform3f(fL.uCenter,x,y,z);
+    gl.uniform1f(fL.uScale,f.scale);
+    gl.uniform1f(fL.uHeat,f.heat);
+    gl.uniform1f(fL.uTime,time);
+    gl.uniform1f(fL.uSeed,i*0.137);
+    gl.drawArrays(gl.TRIANGLES,0,6);
+  }
+  gl.depthMask(true);
+  gl.disable(gl.BLEND);
+}
+
+//////////////////// Post to gl canvas ////////////////////
+function drawPost(time,cam){
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  gl.viewport(0,0,W,H);
+  gl.disable(gl.DEPTH_TEST);
+  gl.useProgram(postProg);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.uniform1i(pL.uTex,0);
+  gl.uniform2f(pL.uRes,W,H);
+  gl.uniform1f(pL.uTime,time);
+  gl.uniform1f(pL.uIntensity,cam.act.intensity);
+  gl.bindBuffer(gl.ARRAY_BUFFER,fsq);
+  gl.enableVertexAttribArray(pL.p);
+  gl.vertexAttribPointer(pL.p,2,gl.FLOAT,false,0,0);
+  gl.drawArrays(gl.TRIANGLES,0,6);
+}
+
+//////////////////// HUD (2D) — livestream / FPS overlay ////////////////////
+const NAMES=["BABY_07","xX_ghost_Xx","seraph","M0THER","pacifier","null_kid","cr4dle","void.mp4","teether","gootra","sw4ddle","angel666"];
+const killfeed=[];
+let lastKill=0;
+const donations=[];
+let lastDono=0;
+let viewers=12000+((Math.random()*4000)|0);
+
+function pushKill(time){
+  const a=NAMES[(Math.random()*NAMES.length)|0];
+  let b=NAMES[(Math.random()*NAMES.length)|0]; if(b===a)b="CIVILIAN";
+  const weap=["☠","✝","♥","∅","▲"][(Math.random()*5)|0];
+  killfeed.push({a,b,weap,t:time});
+  if(killfeed.length>6) killfeed.shift();
+}
+function pushDono(time){
+  const who=NAMES[(Math.random()*NAMES.length)|0];
+  const amt=[1.11,3.33,6.66,9.99,13.13,4.20,100][(Math.random()*7)|0];
+  const msgs=["stay awake","the milk is cold","don't blink","who's watching the baby?","more auras","glory","rock a bye"];
+  donations.push({who,amt,msg:msgs[(Math.random()*msgs.length)|0],t:time,y:0});
+}
+
+function drawHUD(time,cam){
+  const w=stage.width, h=stage.height, s=w/1280; // scale factor
+  ctx.save();
+  ctx.textBaseline="top";
+  const orange="#ff8a3a", hot="#ffd28a", red="#ff4a3a", dim="rgba(255,150,90,0.55)";
+
+  // --- top bar: LIVE + viewers ---
+  ctx.font=`${Math.round(20*s)}px "Courier New",monospace`;
+  ctx.fillStyle=red;
+  ctx.beginPath(); ctx.arc(24*s, 34*s, 7*s, 0, 7); ctx.fill();
+  if(Math.floor(time*2)%2===0){ctx.fillStyle=red; ctx.fillText("LIVE", 40*s, 24*s);}
+  viewers += ((Math.random()*80)-38)|0; if(viewers<8000)viewers=8000;
+  ctx.fillStyle=hot;
+  ctx.fillText("◉ "+viewers.toLocaleString('en')+" watching", 120*s, 24*s);
+  // stream title center
+  ctx.textAlign="center";
+  ctx.fillStyle=dim;
+  ctx.font=`${Math.round(16*s)}px "Courier New",monospace`;
+  ctx.fillText("LOUDTILES // BABY_INVASION_RAW_FEED  —  do not archive", w/2, 26*s);
+  ctx.textAlign="left";
+
+  // --- act title (fades in on act change) ---
+  const localT=time%84;
+  const act=cam.act;
+  const actAge=localT - act.t;
+  let actAlpha=0;
+  if(actAge>=0 && actAge<6) actAlpha=Math.min(1, actAge<1?actAge:(actAge>4?(6-actAge)/2:1));
+  if(actAlpha>0){
+    ctx.globalAlpha=actAlpha;
+    ctx.textAlign="center";
+    ctx.fillStyle=hot;
+    ctx.font=`bold ${Math.round(46*s)}px "Courier New",monospace`;
+    ctx.fillText(act.name, w/2, h*0.42);
+    ctx.globalAlpha=1;
+    ctx.textAlign="left";
+  }
+
+  // --- killfeed (top-right) ---
+  if(time-lastKill > (0.6+Math.random()*1.4)/(0.5+act.intensity)){ pushKill(time); lastKill=time; }
+  ctx.font=`${Math.round(15*s)}px "Courier New",monospace`;
+  ctx.textAlign="right";
+  for(let i=0;i<killfeed.length;i++){
+    const k=killfeed[i];
+    const age=time-k.t;
+    ctx.globalAlpha=Math.max(0,1-age/7);
+    const y=(60+i*22)*s;
+    ctx.fillStyle=hot; ctx.fillText(k.a, w-140*s, y);
+    ctx.fillStyle=red; ctx.fillText(k.weap, w-118*s, y);
+    ctx.fillStyle=dim; ctx.fillText(k.b, w-16*s, y);
+  }
+  ctx.globalAlpha=1; ctx.textAlign="left";
+
+  // --- minimap (top-right, below killfeed) ---
+  const mmR=70*s, mmx=w-mmR-24*s, mmy=210*s;
+  ctx.save();
+  ctx.beginPath(); ctx.arc(mmx,mmy,mmR,0,7); ctx.clip();
+  ctx.fillStyle="rgba(20,6,2,0.6)"; ctx.fillRect(mmx-mmR,mmy-mmR,mmR*2,mmR*2);
+  // sweep
+  const sweep=time*1.5;
+  const grad=ctx.createConicGradient? ctx.createConicGradient(sweep,mmx,mmy):null;
+  if(grad){grad.addColorStop(0,"rgba(255,120,40,0.35)");grad.addColorStop(0.15,"rgba(255,120,40,0)");grad.addColorStop(1,"rgba(255,120,40,0)");
+    ctx.fillStyle=grad; ctx.fillRect(mmx-mmR,mmy-mmR,mmR*2,mmR*2);}
+  // blips from figures
+  ctx.fillStyle=red;
+  for(let i=0;i<figures.length;i++){
+    const f=figures[i];
+    const bx=mmx + (f.x/12)*mmR*0.8;
+    const by=mmy + (((i*13+time*10)%100)/100-0.5)*mmR*1.4;
+    ctx.beginPath(); ctx.arc(bx,by,2.4*s,0,7); ctx.fill();
+  }
+  ctx.restore();
+  ctx.strokeStyle=orange; ctx.lineWidth=1.5*s;
+  ctx.beginPath(); ctx.arc(mmx,mmy,mmR,0,7); ctx.stroke();
+  // player triangle center
+  ctx.fillStyle=hot; ctx.beginPath();
+  ctx.moveTo(mmx,mmy-6*s); ctx.lineTo(mmx-5*s,mmy+5*s); ctx.lineTo(mmx+5*s,mmy+5*s); ctx.fill();
+
+  // --- crosshair ---
+  ctx.strokeStyle="rgba(255,220,180,0.8)"; ctx.lineWidth=1.5*s;
+  const cx=w/2, cy=h/2, g=8*s, l=14*s;
+  ctx.beginPath();
+  ctx.moveTo(cx-g-l,cy); ctx.lineTo(cx-g,cy);
+  ctx.moveTo(cx+g,cy); ctx.lineTo(cx+g+l,cy);
+  ctx.moveTo(cx,cy-g-l); ctx.lineTo(cx,cy-g);
+  ctx.moveTo(cx,cy+g); ctx.lineTo(cx,cy+g+l);
+  ctx.stroke();
+  ctx.fillStyle=red; ctx.beginPath(); ctx.arc(cx,cy,1.6*s,0,7); ctx.fill();
+
+  // --- health + shield (bottom-left) ---
+  const bx=40*s, by=h-70*s, bw=260*s, bh=14*s;
+  const hp=0.5+0.5*Math.sin(time*0.4)*Math.sin(time*0.13); // wandering
+  ctx.fillStyle="rgba(255,80,40,0.15)"; ctx.fillRect(bx,by,bw,bh);
+  ctx.fillStyle=red; ctx.fillRect(bx,by,bw*Math.max(0.05,hp),bh);
+  ctx.strokeStyle=orange; ctx.lineWidth=1*s; ctx.strokeRect(bx,by,bw,bh);
+  ctx.fillStyle="rgba(120,180,255,0.15)"; ctx.fillRect(bx,by+bh+6*s,bw,bh*0.7);
+  ctx.fillStyle="rgba(140,190,255,0.85)"; ctx.fillRect(bx,by+bh+6*s,bw*(0.3+0.3*Math.sin(time*0.9)),bh*0.7);
+  ctx.font=`${Math.round(13*s)}px "Courier New",monospace`;
+  ctx.fillStyle=hot; ctx.fillText("HP "+Math.round(hp*100), bx, by-18*s);
+
+  // --- ammo (bottom-right) ---
+  ctx.textAlign="right";
+  ctx.fillStyle=hot;
+  ctx.font=`${Math.round(38*s)}px "Courier New",monospace`;
+  const ammo=Math.max(0, 66-Math.floor((time*7)%67));
+  ctx.fillText(ammo+" / ∞", w-40*s, h-84*s);
+  ctx.font=`${Math.round(14*s)}px "Courier New",monospace`;
+  ctx.fillStyle=dim;
+  ctx.fillText("[ MILK-9 // FULL AUTO ]", w-40*s, h-44*s);
+  ctx.textAlign="left";
+
+  // --- donation ticker (rises bottom-left, above health) ---
+  if(time-lastDono > 2.2+Math.random()*3){ pushDono(time); lastDono=time; }
+  ctx.font=`${Math.round(14*s)}px "Courier New",monospace`;
+  for(let i=donations.length-1;i>=0;i--){
+    const d=donations[i]; const age=time-d.t;
+    if(age>6){ donations.splice(i,1); continue; }
+    const yy=by-60*s-age*22*s;
+    ctx.globalAlpha=Math.max(0,1-age/6);
+    ctx.fillStyle=hot;
+    ctx.fillText("♥ "+d.who+" — $"+d.amt.toFixed(2), bx, yy);
+    ctx.fillStyle=dim;
+    ctx.fillText('   "'+d.msg+'"', bx, yy+16*s);
+  }
+  ctx.globalAlpha=1;
+
+  // --- timecode + REC (bottom center) ---
+  ctx.textAlign="center";
+  ctx.fillStyle=dim;
+  ctx.font=`${Math.round(13*s)}px "Courier New",monospace`;
+  const tc=fmtTC(time);
+  ctx.fillText("REC "+tc+"   f/2.8   IR-THERMAL   ISO 6400", w/2, h-30*s);
+  ctx.textAlign="left";
+
+  // frame vignette lines
+  ctx.strokeStyle="rgba(255,120,60,0.15)"; ctx.lineWidth=2*s;
+  ctx.strokeRect(10*s,10*s,w-20*s,h-20*s);
+  ctx.restore();
+}
+function fmtTC(t){
+  const f=Math.floor((t*24)%24);
+  const sec=Math.floor(t)%60, mn=Math.floor(t/60)%60;
+  const p=(n,l=2)=>String(n).padStart(l,'0');
+  return p(mn)+":"+p(sec)+":"+p(f);
+}
+
+//////////////////// Main loop ////////////////////
+let start=performance.now()/1000, last=start;
+function frame(){
+  const now=performance.now()/1000;
+  let dt=Math.min(now-last,0.05); last=now;
+  const time=now-start;
+
+  const cam=computeCamera(time,dt);
+  const asp=W/H;
+  const P=M.persp(1.15, asp, 0.1, 600);
+  const V=M.lookAt(cam.eye, cam.center, [0,1,0]);
+  const VP=M.mul(P,V);
+
+  drawScene(time,cam,VP);
+  drawPost(time,cam);
+
+  // composite WebGL canvas + HUD into the visible 2D stage (also what we record)
+  ctx.clearRect(0,0,stage.width,stage.height);
+  ctx.drawImage(glCanvas,0,0,stage.width,stage.height);
+  drawHUD(time,cam);
+
+  requestAnimationFrame(frame);
+}
+
+//////////////////// Recording (video export) ////////////////////
+let recorder=null, chunks=[], recStart=0;
+const status=document.getElementById('status');
+const recBtn=document.getElementById('rec');
+function pickMime(){
+  const opts=['video/mp4;codecs=avc1','video/mp4',
+              'video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
+  for(const o of opts) if(window.MediaRecorder && MediaRecorder.isTypeSupported(o)) return o;
+  return '';
+}
+recBtn.addEventListener('click',()=>{
+  if(recorder && recorder.state!=='inactive'){ recorder.stop(); return; }
+  const stream=stage.captureStream(30);
+  const mime=pickMime();
+  try{ recorder=new MediaRecorder(stream, mime?{mimeType:mime, videoBitsPerSecond:12_000_000}:undefined); }
+  catch(e){ status.textContent="Enregistrement non supporté"; return; }
+  chunks=[];
+  recorder.ondataavailable=e=>{ if(e.data.size) chunks.push(e.data); };
+  recorder.onstop=()=>{
+    const ext=(recorder.mimeType||mime).includes('mp4')?'mp4':'webm';
+    const blob=new Blob(chunks,{type:recorder.mimeType||mime});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download=`loudtiles_${Date.now()}.${ext}`; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),4000);
+    recBtn.textContent="● Rec"; recBtn.classList.remove('rec'); status.textContent="Fichier ."+ext+" téléchargé";
+  };
+  recorder.start();
+  recStart=performance.now();
+  recBtn.textContent="■ Stop"; recBtn.classList.add('rec');
+  const tick=()=>{ if(recorder&&recorder.state==='recording'){
+    status.innerHTML='<span class="blink">REC</span> '+((performance.now()-recStart)/1000).toFixed(1)+'s';
+    requestAnimationFrame(tick);} };
+  tick();
+});
+
+document.getElementById('shot').addEventListener('click',()=>{
+  const a=document.createElement('a');
+  a.href=stage.toDataURL('image/png'); a.download=`loudtiles_${Date.now()}.png`; a.click();
+});
+document.getElementById('fs').addEventListener('click',()=>{
+  if(!document.fullscreenElement) document.documentElement.requestFullscreen();
+  else document.exitFullscreen();
+});
+
+//////////////////// go ////////////////////
+resize();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
