@@ -12,12 +12,21 @@ réseau. Ouvre les fichiers dans un navigateur.
 
 ## Fichiers
 
-- **`index.html`** — le film temps réel (rue de motel + héros + HUD).
+- **`scene.html`** — **« Rencontre avec Koffi »**, un court-métrage scénarisé
+  et joué en temps réel : POV du protagoniste au sol, trois soldats qui
+  approchent, **Koffi** qui surgit et les abat un par un (**killfeed façon
+  Call of Duty** + bandeau `KOFFI — n KILLS`), puis qui s'approche, tend la
+  main et relève le protagoniste avant de repartir. Sous-titres de la
+  narration à chaque plan, letterbox cinéma, flashs de tir, fumée, mode
+  thermique, boucle, **Rejouer** et export vidéo.
+- **`index.html`** — le film/VJ loop temps réel (rue de motel + héros + HUD).
 - **`character.html`** — le **visualiseur 3D du personnage principal** :
   orbite à la souris (glisser = tourner, molette = zoom), **sélecteur de
   pose** (bouton *Pose ▸*), rotation automatique, mode **fil de fer**, mode
   **thermique**, **export `.OBJ` + `.MTL`** de la pose courante (pour ouvrir
   le modèle dans Blender / tout logiciel 3D), et photo.
+- **`world.js`** — le **décor** partagé (rue de motel, enseigne, palmiers,
+  voiture en feu, etc.), utilisé par le film et par la scène.
 - **`hero.js`** — le **modèle 3D du héros** et les primitives partagées
   (source unique utilisée par le film et par le visualiseur), plus le GLSL des
   matériaux. Le personnage y est construit à partir de boîtes et de sphères :
@@ -63,6 +72,10 @@ réseau. Ouvre les fichiers dans un navigateur.
   visée…) — le cadrage s'adapte automatiquement à la taille de la pose.
 
 ## Utilisation
+
+**La scène « Rencontre avec Koffi »** — ouvre `scene.html`. Elle se joue toute
+seule (~40 s) et boucle ; boutons **Rejouer**, **● Rec** (export vidéo),
+**Thermique [T]**, **Plein écran**.
 
 **Le film** — ouvre `index.html` dans un navigateur récent (Chrome / Edge / Safari).
 

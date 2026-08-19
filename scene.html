@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LOUDTILES — Rencontre avec Koffi</title>
+<style>
+  :root{color-scheme:dark;}
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:"Courier New",ui-monospace,monospace;-webkit-font-smoothing:none;}
+  #stage{position:fixed;inset:0;width:100%;height:100%;display:block;background:#000;}
+  #gl{display:none;}
+  #ui{position:fixed;left:12px;top:12px;z-index:10;display:flex;gap:8px;align-items:center;font-size:12px;color:#ffdca0;}
+  #ui button{background:#000000aa;border:1px solid #ffffff33;color:#ffe6c0;padding:6px 10px;font:inherit;letter-spacing:.06em;cursor:pointer;border-radius:2px;text-transform:uppercase;}
+  #ui button:hover{background:#ffffff22;}
+  #ui button.rec{color:#ff5a4a;border-color:#ff5a4a99;}
+  #hint{position:fixed;right:12px;top:14px;z-index:10;font-size:10px;color:#ffffff66;letter-spacing:.1em;}
+  @keyframes blink{50%{opacity:.25}} .blink{animation:blink 1s steps(2) infinite;}
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<canvas id="gl"></canvas>
+<div id="ui">
+  <button id="replay">↻ Rejouer</button>
+  <button id="rec">● Rec</button>
+  <button id="therm">Thermique [T]</button>
+  <button id="fs">Plein écran</button>
+  <span id="status"></span>
+</div>
+<div id="hint">LOUDTILES · RENCONTRE AVEC KOFFI</div>
+
+<script src="hero.js"></script>
+<script src="world.js"></script>
+<script>
+/* =========================================================================
+   LOUDTILES // Rencontre avec Koffi  — court-métrage scénarisé, temps réel.
+   POV du protagoniste au sol ; Koffi surgit et abat 3 soldats (killfeed CoD),
+   puis le relève. Moteur WebGL maison (hero.js + world.js).
+   ========================================================================= */
+const glCanvas=document.getElementById('gl');
+const gl=glCanvas.getContext('webgl',{antialias:true,preserveDrawingBuffer:true,alpha:false});
+const stage=document.getElementById('stage'); const ctx=stage.getContext('2d');
+let W,H,DPR;
+function resize(){DPR=Math.min(window.devicePixelRatio||1,1.5);
+  W=glCanvas.width=Math.floor(innerWidth*DPR);H=glCanvas.height=Math.floor(innerHeight*DPR);
+  stage.width=W;stage.height=H;stage.style.width=innerWidth+'px';stage.style.height=innerHeight+'px';
+  gl.viewport(0,0,W,H);buildTargets();}
+addEventListener('resize',resize);
+
+function sh(t,s){const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);
+  if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(o)+"\n"+s);return o;}
+function prog(v,f){const p=gl.createProgram();gl.attachShader(p,sh(gl.VERTEX_SHADER,v));
+  gl.attachShader(p,sh(gl.FRAGMENT_SHADER,f));gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));return p;}
+
+// vec/mat
+const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],add=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]],
+ cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],
+ dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],len=a=>Math.hypot(a[0],a[1],a[2]),
+ norm=a=>{const l=len(a)||1;return[a[0]/l,a[1]/l,a[2]/l];};
+const mul=(a,b)=>{const o=new Array(16);for(let r=0;r<4;r++)for(let c=0;c<4;c++){let s=0;for(let k=0;k<4;k++)s+=a[k*4+c]*b[r*4+k];o[r*4+c]=s;}return o;};
+const persp=(f,as,n,fr)=>{const t=1/Math.tan(f/2);return[t/as,0,0,0,0,t,0,0,0,0,(fr+n)/(n-fr),-1,0,0,(2*fr*n)/(n-fr),0];};
+const lookAt=(e,c,u)=>{const z=norm(sub(e,c)),x=norm(cross(u,z)),y=cross(z,x);
+  return[x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-dot(x,e),-dot(y,e),-dot(z,e),1];};
+const I4=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
+const T4=(x,y,z)=>[1,0,0,0,0,1,0,0,0,0,1,0,x,y,z,1];
+const RY4=a=>{const c=Math.cos(a),s=Math.sin(a);return[c,0,-s,0,0,1,0,0,s,0,c,0,0,0,0,1];};
+const RX4=a=>{const c=Math.cos(a),s=Math.sin(a);return[1,0,0,0,0,c,s,0,0,-s,c,0,0,0,0,1];};
+const modelMat=(pos,yaw,tilt)=>mul(mul(T4(pos[0],pos[1],pos[2]),RY4(yaw||0)),RX4(tilt||0));
+const lerp=(a,b,t)=>a+(b-a)*t, sat=t=>t<0?0:t>1?1:t, sstep=t=>{t=sat(t);return t*t*(3-2*t);};
+const lv=(a,b,t)=>[lerp(a[0],b[0],t),lerp(a[1],b[1],t),lerp(a[2],b[2],t)];
+
+//////////////////// buffers ////////////////////
+const {AS,SKIN,CAMO,GEAR,SOLE}=MATID;
+function upload(geo){const b={p:gl.createBuffer(),n:gl.createBuffer(),m:gl.createBuffer(),c:0};
+  gl.bindBuffer(gl.ARRAY_BUFFER,b.p);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(geo.pos),gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER,b.n);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(geo.nrm),gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER,b.m);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(geo.mat),gl.STATIC_DRAW);
+  b.c=geo.pos.length/3;return b;}
+
+// environment (static)
+const envGeo=Geo(); buildWorld(envGeo); const ENV=upload(envGeo);
+// soldier (one mesh, drawn x3)
+const solGeo=Geo(); buildSoldier(solGeo,[0,0,0],'aim'); const SOL=upload(solGeo);
+// koffi (rebuilt on pose change)
+let KOF=null, koffiPose='';
+function setKoffi(pose){ if(pose===koffiPose)return; koffiPose=pose;
+  const kg=Geo(); buildHero(kg,[0,0,0],pose); if(KOF){gl.deleteBuffer(KOF.p);gl.deleteBuffer(KOF.n);gl.deleteBuffer(KOF.m);} KOF=upload(kg); }
+setKoffi('aim_pistol');
+// POV protagonist legs (on the ground, pointing away from camera)
+const legGeo=Geo();
+for(const s of[-1,1]){   // laid out flat along the ground, receding away from camera
+  const hip=[s*0.15,0.26,-0.35], knee=[s*0.28,0.32,-1.0], ankle=[s*0.32,0.16,-1.7], toe=[s*0.32,0.12,-2.15];
+  legGeo.limb(hip,knee,0.115,CAMO);
+  legGeo.limb(knee,ankle,0.105,CAMO);
+  legGeo.limb(ankle,toe,0.12,GEAR);
+  legGeo.box(s*0.32,0.055,-1.92,0.24,0.06,0.5,SOLE);
+}
+const LEGS=upload(legGeo);
+// POV reaching arm (built pointing up/forward; placed via uModel)
+const armGeo=Geo();
+armGeo.limb([0,-0.15,0],[0.02,0.55,-0.12],0.075,SKIN);
+armGeo.sphere(0.03,0.60,-0.14,0.10,SKIN,5,7);
+armGeo.limb([-0.02,-0.4,0.1],[0,-0.15,0],0.085,SKIN);
+const ARM=upload(armGeo);
+
+//////////////////// scene program (with per-object uModel) ////////////////////
+const sceneProg=prog(`
+attribute vec3 aPos,aNrm; attribute float aMat;
+uniform mat4 uVP,uModel; varying vec3 vW,vN; varying float vM;
+void main(){ vec4 wp=uModel*vec4(aPos,1.0); vW=wp.xyz; vN=mat3(uModel)*aNrm; vM=aMat; gl_Position=uVP*wp; }`,
+`precision highp float;
+varying vec3 vW,vN; varying float vM;
+uniform vec3 uCam,uSun,uSky; uniform float uTime;
+`+MAT_GLSL+`
+void main(){
+ vec3 N=normalize(vN),V=normalize(uCam-vW);
+ vec3 alb,emi; material(vM,vW,alb,emi);
+ float ndl=max(dot(N,uSun),0.0);
+ vec3 sun=vec3(1.0,0.82,0.6)*2.3*ndl;
+ vec3 amb=mix(vec3(0.26,0.30,0.40),vec3(0.52,0.55,0.62),N.y*0.5+0.5);
+ float rim=pow(1.0-max(dot(N,V),0.0),3.0), back=max(dot(N,-uSun),0.0);
+ vec3 col=alb*(amb*0.72+sun)+emi;
+ col+=vec3(1.0,0.8,0.55)*rim*(0.5+back*1.7);
+ float d=length(vW-uCam); float fog=1.0-exp(-d*0.032);
+ col=mix(col,uSky,clamp(fog,0.0,0.72));
+ float bright=clamp(max(max(col.r,col.g),col.b)-0.8,0.0,1.0)+clamp(dot(emi,vec3(0.5)),0.0,1.0);
+ gl_FragColor=vec4(col,clamp(bright,0.0,1.0));
+}`);
+const sL={aPos:gl.getAttribLocation(sceneProg,'aPos'),aNrm:gl.getAttribLocation(sceneProg,'aNrm'),aMat:gl.getAttribLocation(sceneProg,'aMat'),
+ uVP:gl.getUniformLocation(sceneProg,'uVP'),uModel:gl.getUniformLocation(sceneProg,'uModel'),
+ uCam:gl.getUniformLocation(sceneProg,'uCam'),uSun:gl.getUniformLocation(sceneProg,'uSun'),uSky:gl.getUniformLocation(sceneProg,'uSky'),uTime:gl.getUniformLocation(sceneProg,'uTime')};
+
+//////////////////// sky ////////////////////
+const skyProg=prog(`attribute vec2 p;varying vec2 uv;void main(){uv=p*0.5+0.5;gl_Position=vec4(p,0.999,1.0);}`,
+`precision highp float;varying vec2 uv;uniform vec2 uSunUV;uniform float uAsp;
+void main(){vec3 top=vec3(0.20,0.24,0.34),hor=vec3(0.52,0.50,0.50);
+ vec3 c=mix(hor,top,smoothstep(0.15,1.0,uv.y));
+ vec2 d=(uv-uSunUV);d.x*=uAsp;c+=vec3(1.0,0.8,0.6)*exp(-dot(d,d)*10.0)*0.5+vec3(1.0,0.85,0.7)*exp(-dot(d,d)*60.0)*0.9;
+ float br=clamp(max(max(c.r,c.g),c.b)-0.7,0.0,1.0);gl_FragColor=vec4(c,br);}`);
+const skL={p:gl.getAttribLocation(skyProg,'p'),uSunUV:gl.getUniformLocation(skyProg,'uSunUV'),uAsp:gl.getUniformLocation(skyProg,'uAsp')};
+
+//////////////////// billboards (fire, smoke, muzzle, blood) ////////////////////
+const bbProg=prog(`attribute vec2 c;uniform mat4 uVP;uniform vec3 uPos,uR,uU;uniform float uS;varying vec2 v;
+void main(){v=c;vec3 w=uPos+uR*c.x*uS+uU*c.y*uS;gl_Position=uVP*vec4(w,1.0);}`,
+`precision highp float;varying vec2 v;uniform float uKind,uT,uSeed,uAlpha;
+`+`float hash(vec3 p){return fract(sin(dot(p,vec3(12.9,78.2,37.7)))*43758.5);}
+float n3(vec3 p){vec3 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
+ return mix(mix(mix(hash(i),hash(i+vec3(1,0,0)),f.x),mix(hash(i+vec3(0,1,0)),hash(i+vec3(1,1,0)),f.x),f.y),
+            mix(mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x),mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x),f.y),f.z);}`+`
+void main(){float r=length(v);
+ if(uKind<0.5){float f=smoothstep(1.0,0.0,r)*(0.7+0.3*sin(uT*20.0+uSeed*9.0));f*=0.6+0.6*n3(vec3(v*3.0,uT*2.0+uSeed));if(f<0.03)discard;
+   gl_FragColor=vec4(mix(vec3(1.4,0.2,0.02),vec3(1.6,1.2,0.3),smoothstep(0.2,0.9,f))*f,f);}
+ else if(uKind<1.5){float a=smoothstep(1.0,0.15,r)*uAlpha;float nn=n3(vec3(v*2.0+uSeed,uT*0.3));a*=0.5+0.6*nn;if(a<0.02)discard;
+   gl_FragColor=vec4(mix(vec3(0.05,0.05,0.06),vec3(0.32,0.31,0.30),nn),a);}
+ else if(uKind<2.5){float f=smoothstep(1.0,0.0,r);f*=0.6+0.4*n3(vec3(v*5.0,uSeed*3.0));if(f<0.05)discard; // muzzle
+   gl_FragColor=vec4(mix(vec3(1.6,0.9,0.3),vec3(1.8,1.7,1.2),f)*f*uAlpha,f);}
+ else{float a=smoothstep(1.0,0.1,r)*uAlpha;if(a<0.03)discard; // blood
+   gl_FragColor=vec4(vec3(0.45,0.02,0.02)*a,a);}}`);
+const bL={c:gl.getAttribLocation(bbProg,'c'),uVP:gl.getUniformLocation(bbProg,'uVP'),uPos:gl.getUniformLocation(bbProg,'uPos'),
+ uR:gl.getUniformLocation(bbProg,'uR'),uU:gl.getUniformLocation(bbProg,'uU'),uS:gl.getUniformLocation(bbProg,'uS'),
+ uKind:gl.getUniformLocation(bbProg,'uKind'),uT:gl.getUniformLocation(bbProg,'uT'),uSeed:gl.getUniformLocation(bbProg,'uSeed'),uAlpha:gl.getUniformLocation(bbProg,'uAlpha')};
+const quad=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,quad);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,1,1,-1,-1,1,1,-1,1]),gl.STATIC_DRAW);
+
+//////////////////// post ////////////////////
+const postProg=prog(`attribute vec2 p;varying vec2 uv;void main(){uv=p*0.5+0.5;gl_Position=vec4(p,0.0,1.0);}`,
+`precision highp float;varying vec2 uv;uniform sampler2D uTex;uniform vec2 uRes;uniform float uTime,uThermal,uFade;
+vec3 thermal(float t){t=clamp(t,0.0,1.0);vec3 c0=vec3(0.02,0.02,0.06),c1=vec3(0.13,0.02,0.28),c2=vec3(0.55,0.03,0.35),c3=vec3(0.90,0.12,0.05),c4=vec3(1.0,0.45,0.02),c5=vec3(1.0,0.85,0.2),c6=vec3(1.0,1.0,0.98);
+ if(t<0.16)return mix(c0,c1,t/0.16);if(t<0.34)return mix(c1,c2,(t-0.16)/0.18);if(t<0.52)return mix(c2,c3,(t-0.34)/0.18);if(t<0.68)return mix(c3,c4,(t-0.52)/0.16);if(t<0.85)return mix(c4,c5,(t-0.68)/0.17);return mix(c5,c6,(t-0.85)/0.15);}
+float h2(vec2 p){return fract(sin(dot(p,vec2(41.13,289.7)))*43758.5);}
+void main(){vec2 d=uv-0.5;float r2=dot(d,d);float ab=(0.0012+0.005*r2);
+ vec3 col;col.r=texture2D(uTex,uv-d*ab).r;col.g=texture2D(uTex,uv).g;col.b=texture2D(uTex,uv+d*ab).b;
+ vec3 bloom=vec3(0.0);float bw=0.0;
+ for(int i=-2;i<=2;i++)for(int j=-2;j<=2;j++){vec2 o=vec2(float(i),float(j))/uRes*3.0;vec4 s=texture2D(uTex,uv+o);bloom+=s.rgb*s.a;bw+=s.a;}
+ if(bw>0.0)col+=bloom/bw*clamp(bw*0.08,0.0,1.0)*0.6;
+ if(uThermal>0.5){float l=dot(col,vec3(0.3,0.59,0.11));col=thermal(pow(l,0.8));}
+ else{col=col/(col+0.62)*1.55;col=(col-0.5)*1.13+0.5;col.r*=1.05;}
+ col+=(h2(uv*uRes+fract(uTime)*133.0)-0.5)*0.05;
+ col*=smoothstep(1.05,0.22,r2*1.7);
+ col*=uFade;
+ gl_FragColor=vec4(pow(max(col,0.0),vec3(0.95)),1.0);}`);
+const pL={p:gl.getAttribLocation(postProg,'p'),uTex:gl.getUniformLocation(postProg,'uTex'),uRes:gl.getUniformLocation(postProg,'uRes'),
+ uTime:gl.getUniformLocation(postProg,'uTime'),uThermal:gl.getUniformLocation(postProg,'uThermal'),uFade:gl.getUniformLocation(postProg,'uFade')};
+const fsq=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,fsq);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,1,1,-1,-1,1,1,-1,1]),gl.STATIC_DRAW);
+
+let fbo,tex,depth;
+function buildTargets(){if(tex)gl.deleteTexture(tex);if(fbo)gl.deleteFramebuffer(fbo);if(depth)gl.deleteRenderbuffer(depth);
+ tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,W,H,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+ gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+ gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+ depth=gl.createRenderbuffer();gl.bindRenderbuffer(gl.RENDERBUFFER,depth);gl.renderbufferStorage(gl.RENDERBUFFER,gl.DEPTH_COMPONENT16,W,H);
+ fbo=gl.createFramebuffer();gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
+ gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.RENDERBUFFER,depth);gl.bindFramebuffer(gl.FRAMEBUFFER,null);}
+
+const SUN=norm([0.14,0.34,-1.0]), SKYC=[0.55,0.53,0.52];
+
+//////////////////// ambient fire/smoke at wrecked car ////////////////////
+const FIRE=[],SMOKE=[];
+for(let i=0;i<18;i++)FIRE.push({o:[CARFRONT[0]+(Math.random()-0.5)*1.4,CARFRONT[1],CARFRONT[2]+(Math.random()-0.5)*1.8],ph:Math.random()*6.28,sp:0.5+Math.random()*0.6,sc:0.35+Math.random()*0.4,h:0.8+Math.random()});
+for(let i=0;i<24;i++)SMOKE.push({o:[CARFRONT[0]+(Math.random()-0.5)*1.8,CARFRONT[1]+0.4,CARFRONT[2]+(Math.random()-0.5)*2.0],ph:Math.random()*6.28,sp:0.25+Math.random()*0.3,sc:1.3+Math.random()*1.6,h:5+Math.random()*3});
+
+//////////////////// SCENARIO / director ////////////////////
+// Layout: protagonist (camera) near z=0 looking toward -Z. Soldiers advance
+// from -Z; Koffi appears further -Z, behind them, and fires toward +Z.
+const SOL_X=[-1.7,0.1,1.7];
+const KILL_T=[12.6,15.5,18.5];
+const DUR=41;
+let killsShown=0; const killfeed=[]; let banner="";
+function resetScenario(){killsShown=0;killfeed.length=0;banner="";muzz.length=0;bloods.length=0;}
+const muzz=[], bloods=[];
+
+// subtitles [start,end,text]
+const SUBS=[
+ [0.2,4,"JE SUIS À TERRE.\nJe n'arrive plus à bouger. Ma vision tremble, ma respiration est courte."],
+ [4,8,"Trois soldats avancent vers moi, leurs armes braquées.\n« C'EST FINI. »"],
+ [8,10.3,"Je ferme les yeux.\nDes tirs éclatent."],
+ [10.3,12.2,"J'ouvre les yeux.\nUn homme vient d'apparaître derrière eux."],
+ [12.2,13.6,"KOFFI."],
+ [13.6,15.3,"Trois rafales. Le premier soldat tombe."],
+ [15.3,18.3,"Il pivote immédiatement. Le deuxième s'écroule."],
+ [18.3,21,"Le dernier tente de se retourner.\nUn dernier coup de feu. Silence."],
+ [21,25,"Je reste au sol, incapable de comprendre\nce qui vient de se passer."],
+ [25,30,"Koffi range son arme et s'approche. Il me tend la main.\n« DEBOUT. ON N'A PAS FINI. »"],
+ [30,34,"Je saisis sa main.\nIl me relève."],
+ [34,41,"Pour la première fois, je ne suis plus seul.\nJe le suis."],
+];
+function subAt(t){for(const s of SUBS)if(t>=s[0]&&t<s[1])return s;return null;}
+
+// soldier state at time t: {pos,yaw,tilt,visible}
+function soldierState(i,t){
+  const x=SOL_X[i];
+  const zAdv=lerp(-8.5,-4.6, sstep((t-1.5)/4));   // advance during beats 1-2
+  let z=Math.min(-4.6, zAdv); if(t<1.5)z=-8.5;
+  const yaw=0; // facing +Z (toward protagonist)
+  const kt=KILL_T[i]; let tilt=0, dz=0, dy=0;
+  if(t>=kt){ const k=sat((t-kt)/0.55); tilt=-1.55*sstep(k); dz=-0.4*sstep(k); dy=-0.05*sstep(k); }
+  return {pos:[x,0+dy,z+dz],yaw,tilt,vis:t>1.0};
+}
+// koffi state
+function koffiState(t){
+  if(t<9)   return {pose:'aim_pistol',pos:[0,0,-9],yaw:0,vis:false};
+  if(t<21){ // firing: face each target a touch
+    let yaw=0;
+    if(t>=KILL_T[0]&&t<KILL_T[1]) yaw=Math.atan2(SOL_X[0]-0.1,3.5)*0.7;
+    else if(t>=KILL_T[1]&&t<KILL_T[2]) yaw=Math.atan2(SOL_X[1]-0.1,3.5)*0.7;
+    else if(t>=KILL_T[2]) yaw=Math.atan2(SOL_X[2]-0.1,3.5)*0.7;
+    return {pose:'aim_pistol',pos:[0.1,0,-7.6],yaw,vis:true};
+  }
+  if(t<25) return {pose:'stand',pos:[0.1,0,-6.5],yaw:0.1,vis:true};        // beat 7
+  if(t<30){ const k=sstep((t-25)/3.2); return {pose:'kneel_reach',pos:[0.1,0,lerp(-6.5,-1.35,k)],yaw:0,vis:true}; } // approach + kneel
+  if(t<34) return {pose:'kneel_reach',pos:[0.1,0,-1.35],yaw:0,vis:true};   // hold, reaching
+  const k=sstep((t-34)/6.5); return {pose:'walk',pos:[0.1,0,lerp(-1.6,-9,k)],yaw:Math.PI,vis:true}; // turn & walk away
+}
+// camera POV
+function cameraState(t){
+  let eye,center,fov=1.02;
+  const trem=[Math.sin(t*9)*0.012+Math.sin(t*3.3)*0.02, Math.sin(t*7.1)*0.012, 0];
+  if(t<8){ eye=[0.15,0.42,0.5]; center=[0.0,0.55,-6]; }              // on the ground
+  else if(t<21){ eye=[0.1,0.46,0.35]; center=[0.1,0.7,-6.2]; }       // watching the kills
+  else if(t<25){ eye=[0.1,0.5,0.3]; center=[0.1,0.9,-6.4]; }         // silence
+  else if(t<30){ eye=[0.1,0.5,0.2]; center=lv([0.1,0.9,-6.4],[0.1,1.0,-1.6],sstep((t-25)/4)); } // koffi approaches
+  else if(t<34){ const k=sstep((t-30)/3.8); eye=[0.1,lerp(0.5,1.62,k),lerp(0.2,0.1,k)]; center=[0.1,lerp(1.0,1.5,k),-1.4]; } // lifted up
+  else { const k=sstep((t-34)/6.5); eye=[0.1,1.62,lerp(0.1,-1.2,k)]; center=[0.1,1.5,lerp(-1.4,-9,k)];  // follow Koffi
+         eye[1]+=Math.sin(t*7)*0.02; } // walk bob
+  eye=[eye[0]+trem[0],eye[1]+trem[1],eye[2]];
+  const thermal=manualThermal;
+  return {eye,center,fov,thermal};
+}
+// black blink when "eyes closed" (~8.4–9.4) + final fade out
+function fadeAt(t){
+  let f=1.0;
+  f*=1.0 - 0.9*Math.exp(-Math.pow((t-8.9)/0.35,2.0));   // blink
+  if(t<0.8) f*=sstep(t/0.8);                              // fade in
+  if(t>DUR-1.5) f*=sstep((DUR-t)/1.5);                    // fade out
+  return f;
+}
+
+//////////////////// draw ////////////////////
+function projUV(VP,p){const x=p[0],y=p[1],z=p[2];
+  const cx=VP[0]*x+VP[4]*y+VP[8]*z+VP[12],cy=VP[1]*x+VP[5]*y+VP[9]*z+VP[13],cw=VP[3]*x+VP[7]*y+VP[11]*z+VP[15];
+  return[(cx/cw)*0.5+0.5,(cy/cw)*0.5+0.5,cw];}
+function drawMesh(buf,model){
+  gl.uniformMatrix4fv(sL.uModel,false,model);
+  gl.bindBuffer(gl.ARRAY_BUFFER,buf.p);gl.enableVertexAttribArray(sL.aPos);gl.vertexAttribPointer(sL.aPos,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER,buf.n);gl.enableVertexAttribArray(sL.aNrm);gl.vertexAttribPointer(sL.aNrm,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER,buf.m);gl.enableVertexAttribArray(sL.aMat);gl.vertexAttribPointer(sL.aMat,1,gl.FLOAT,false,0,0);
+  gl.drawArrays(gl.TRIANGLES,0,buf.c);
+}
+function bbDraw(kind,pos,scale,seed,alpha,right,up){
+  gl.uniform1f(bL.uKind,kind);gl.uniform3fv(bL.uPos,pos);gl.uniform1f(bL.uS,scale);gl.uniform1f(bL.uSeed,seed);gl.uniform1f(bL.uAlpha,alpha);
+  gl.drawArrays(gl.TRIANGLES,0,6);
+}
+function drawFrame(t){
+  const cam=cameraState(t), kof=koffiState(t);
+  setKoffi(kof.pose);
+  const P=persp(cam.fov,W/H,0.05,200), Vm=lookAt(cam.eye,cam.center,[0,1,0]), VP=mul(P,Vm);
+
+  // spawn kill events
+  for(let i=0;i<3;i++){ if(t>=KILL_T[i] && killsShown<=i){ killsShown=i+1;
+    killfeed.push({a:'KOFFI',b:'SOLDAT '+(i+1),t});
+    banner="KOFFI — "+(i+1)+(i+1>1?" KILLS":" KILL");
+    const ss=soldierState(i,KILL_T[i]+0.01);
+    muzz.push({t0:t}); bloods.push({pos:[ss.pos[0],1.2,ss.pos[2]],t0:t}); } }
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);gl.viewport(0,0,W,H);
+  gl.clearColor(0.5,0.5,0.5,0);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  // sky
+  gl.disable(gl.DEPTH_TEST);gl.depthMask(false);gl.disable(gl.BLEND);
+  gl.useProgram(skyProg);const sunUV=projUV(VP,add(cam.eye,[SUN[0]*80,SUN[1]*80,SUN[2]*80]));
+  gl.uniform2f(skL.uSunUV,sunUV[2]>0?sunUV[0]:0.5,sunUV[2]>0?sunUV[1]:1.2);gl.uniform1f(skL.uAsp,W/H);
+  gl.bindBuffer(gl.ARRAY_BUFFER,fsq);gl.enableVertexAttribArray(skL.p);gl.vertexAttribPointer(skL.p,2,gl.FLOAT,false,0,0);
+  gl.drawArrays(gl.TRIANGLES,0,6);
+  // opaque
+  gl.enable(gl.DEPTH_TEST);gl.depthMask(true);gl.depthFunc(gl.LEQUAL);
+  gl.useProgram(sceneProg);gl.uniformMatrix4fv(sL.uVP,false,VP);
+  gl.uniform3fv(sL.uCam,cam.eye);gl.uniform3fv(sL.uSun,SUN);gl.uniform3fv(sL.uSky,SKYC);gl.uniform1f(sL.uTime,t);
+  drawMesh(ENV,I4);
+  // soldiers
+  for(let i=0;i<3;i++){const s=soldierState(i,t); if(s.vis) drawMesh(SOL,modelMat(s.pos,s.yaw,s.tilt));}
+  // koffi
+  if(kof.vis) drawMesh(KOF,modelMat(kof.pos,kof.yaw,0));
+  // POV legs (while on the ground, beats 1-8)
+  if(t<30) drawMesh(LEGS,I4);
+  // POV reaching arm (beat 9)
+  if(t>=29.5&&t<34.5){ const k=sstep((t-29.8)/3.4);
+    const ap=[0.12,lerp(-0.5,0.55,k),lerp(-0.35,-0.75,k)]; drawMesh(ARM,mul(T4(ap[0],ap[1],ap[2]),RX4(-0.5+0.3*k))); }
+
+  // billboards
+  const camDir=norm(sub(cam.center,cam.eye)),right=norm(cross(camDir,[0,1,0])),up=cross(right,camDir);
+  gl.useProgram(bbProg);gl.uniformMatrix4fv(bL.uVP,false,VP);gl.uniform3fv(bL.uR,right);gl.uniform3fv(bL.uU,up);gl.uniform1f(bL.uT,t);
+  gl.bindBuffer(gl.ARRAY_BUFFER,quad);gl.enableVertexAttribArray(bL.c);gl.vertexAttribPointer(bL.c,2,gl.FLOAT,false,0,0);
+  gl.depthMask(false);gl.enable(gl.BLEND);
+  // smoke (alpha)
+  gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+  for(let i=0;i<SMOKE.length;i++){const s=SMOKE[i];const rise=(t*s.sp)%s.h;
+    bbDraw(1,[s.o[0]+Math.sin(t*0.3+s.ph)*rise*0.3,s.o[1]+rise,s.o[2]],s.sc*(0.6+rise/s.h),i*0.31,0.4*(1-rise/s.h));}
+  // fire + muzzle + blood (additive)
+  gl.blendFunc(gl.SRC_ALPHA,gl.ONE);
+  for(let i=0;i<FIRE.length;i++){const f=FIRE[i];const rise=(t*f.sp+f.ph)%f.h;
+    bbDraw(0,[f.o[0]+Math.sin(t*3+f.ph)*0.1,f.o[1]+rise,f.o[2]],f.sc*(1-rise/f.h*0.5),i*0.53,1.0);}
+  // muzzle flashes at koffi gun
+  for(const mz of muzz){const age=t-mz.t0; if(age>=0&&age<0.13){
+    const fwd=[Math.sin(kof.yaw),0,Math.cos(kof.yaw)];
+    const mp=[kof.pos[0]+fwd[0]*0.65,1.52,kof.pos[2]+fwd[2]*0.65];
+    bbDraw(2,mp,0.5,mz.t0,1.0);}}
+  // blood puffs
+  for(const bd of bloods){const age=t-bd.t0; if(age>=0&&age<0.6){
+    bbDraw(3,[bd.pos[0],bd.pos[1]+age*0.3,bd.pos[2]],0.4+age*0.6,bd.t0,1.0-age/0.6);}}
+  gl.disable(gl.BLEND);gl.depthMask(true);
+
+  // post
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,W,H);gl.disable(gl.DEPTH_TEST);
+  gl.useProgram(postProg);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.uniform1i(pL.uTex,0);gl.uniform2f(pL.uRes,W,H);gl.uniform1f(pL.uTime,t);gl.uniform1f(pL.uThermal,cam.thermal?1:0);gl.uniform1f(pL.uFade,fadeAt(t));
+  gl.bindBuffer(gl.ARRAY_BUFFER,fsq);gl.enableVertexAttribArray(pL.p);gl.vertexAttribPointer(pL.p,2,gl.FLOAT,false,0,0);
+  gl.drawArrays(gl.TRIANGLES,0,6);
+}
+
+//////////////////// HUD (killfeed CoD + subtitles + letterbox) ////////////////////
+function drawHUD(t){
+  const w=stage.width,h=stage.height,s=w/1440;
+  ctx.save();ctx.textBaseline="top";ctx.shadowColor="rgba(0,0,0,0.85)";ctx.shadowBlur=4*s;
+  // letterbox bars
+  ctx.shadowBlur=0;ctx.fillStyle="#000";const bar=h*0.07;
+  ctx.fillRect(0,0,w,bar);ctx.fillRect(0,h-bar,w,bar);
+  ctx.shadowBlur=4*s;
+  // killfeed (top-right)
+  ctx.font=`${Math.round(18*s)}px "Courier New",monospace`;ctx.textAlign="right";
+  let ky=bar+16*s;
+  for(let i=Math.max(0,killfeed.length-4);i<killfeed.length;i++){const k=killfeed[i];const age=t-k.t;
+    ctx.globalAlpha=Math.max(0,1-age/9);
+    ctx.fillStyle="#ffd24a";ctx.fillText(k.a,w-150*s,ky);
+    ctx.fillStyle="#f3efe6";ctx.fillText("╾╼",w-118*s,ky);
+    ctx.fillStyle="#ff5a4a";ctx.fillText(k.b,w-30*s,ky);ky+=26*s;}
+  ctx.globalAlpha=1;
+  // kills banner (center-right, punchy) shortly after each kill
+  if(banner){ const lastKill=killfeed.length?killfeed[killfeed.length-1].t:-9; const age=t-lastKill;
+    if(age<2.2){ ctx.globalAlpha=Math.max(0,1-age/2.2);
+      ctx.textAlign="center";ctx.fillStyle="#ffd24a";
+      ctx.font=`bold ${Math.round(30*s)}px "Courier New",monospace`;
+      ctx.fillText(banner,w*0.5,bar+14*s);ctx.globalAlpha=1; } }
+  // subtitle (bottom, above lower bar)
+  const sb=subAt(t);
+  if(sb){ const age=t-sb[0], fade=Math.min(1,age/0.4)*Math.min(1,(sb[1]-t)/0.4);
+    ctx.globalAlpha=Math.max(0,fade);ctx.textAlign="center";
+    const lines=sb[2].split("\n");
+    ctx.font=`${Math.round(21*s)}px "Courier New",monospace`;
+    let y=h-bar-lines.length*30*s-18*s;
+    // backing
+    ctx.shadowBlur=0;ctx.fillStyle="rgba(0,0,0,0.35)";ctx.fillRect(w*0.12,y-8*s,w*0.76,lines.length*30*s+16*s);ctx.shadowBlur=5*s;
+    for(let i=0;i<lines.length;i++){const big=lines[i]===lines[i].toUpperCase()&&lines[i].length<10;
+      ctx.fillStyle=lines[i].startsWith("«")?"#ffd9a0":"#f3efe6";
+      if(big){ctx.font=`bold ${Math.round(34*s)}px "Courier New",monospace`;}else{ctx.font=`${Math.round(21*s)}px "Courier New",monospace`;}
+      ctx.fillText(lines[i],w*0.5,y+i*30*s);}
+    ctx.globalAlpha=1;
+  }
+  // small stream tag
+  ctx.textAlign="left";ctx.fillStyle="rgba(240,235,225,0.5)";ctx.font=`${Math.round(12*s)}px "Courier New",monospace`;
+  ctx.fillText("LOUDTILES // aggr0 drlft",20*s,bar+12*s);
+  ctx.restore();
+}
+
+//////////////////// loop ////////////////////
+let manualThermal=0, startT=performance.now()/1000;
+document.getElementById('therm').addEventListener('click',()=>manualThermal=manualThermal?0:1);
+addEventListener('keydown',e=>{if(e.key==='t'||e.key==='T')manualThermal=manualThermal?0:1;});
+document.getElementById('replay').addEventListener('click',()=>{startT=performance.now()/1000;resetScenario();});
+function frame(){
+  let t=performance.now()/1000-startT;
+  if(t>DUR){ startT=performance.now()/1000; resetScenario(); t=0; } // loop
+  drawFrame(t);
+  ctx.clearRect(0,0,stage.width,stage.height);
+  ctx.drawImage(glCanvas,0,0,stage.width,stage.height);
+  drawHUD(t);
+  requestAnimationFrame(frame);
+}
+
+//////////////////// recording ////////////////////
+let recorder=null,chunks=[],recStart=0;const status=document.getElementById('status'),recBtn=document.getElementById('rec');
+function pickMime(){for(const o of['video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm'])if(window.MediaRecorder&&MediaRecorder.isTypeSupported(o))return o;return '';}
+recBtn.addEventListener('click',()=>{
+  if(recorder&&recorder.state!=='inactive'){recorder.stop();return;}
+  const stream=stage.captureStream(30),mime=pickMime();
+  try{recorder=new MediaRecorder(stream,mime?{mimeType:mime,videoBitsPerSecond:12e6}:undefined);}catch(e){status.textContent="Enregistrement non supporté";return;}
+  chunks=[];recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
+  recorder.onstop=()=>{const ext=(recorder.mimeType||mime).includes('mp4')?'mp4':'webm';const blob=new Blob(chunks,{type:recorder.mimeType||mime});
+    const u=URL.createObjectURL(blob);const a=document.createElement('a');a.href=u;a.download='koffi_scene_'+Date.now()+'.'+ext;a.click();setTimeout(()=>URL.revokeObjectURL(u),4000);
+    recBtn.textContent="● Rec";recBtn.classList.remove('rec');status.textContent="Fichier ."+ext+" téléchargé";};
+  recorder.start();recStart=performance.now();recBtn.textContent="■ Stop";recBtn.classList.add('rec');
+  // auto-restart the scene so the recording captures from the beginning
+  startT=performance.now()/1000;resetScenario();
+  (function tick(){if(recorder&&recorder.state==='recording'){status.innerHTML='<span class="blink">REC</span> '+((performance.now()-recStart)/1000).toFixed(1)+'s';requestAnimationFrame(tick);}})();
+});
+document.getElementById('fs').addEventListener('click',()=>{if(!document.fullscreenElement)document.documentElement.requestFullscreen();else document.exitFullscreen();});
+
+window.SCENE_SEEK=(tt)=>{startT=performance.now()/1000-tt;resetScenario();
+  // replay kill events up to tt so killfeed matches the seeked time
+  for(let i=0;i<3;i++){ if(tt>=KILL_T[i]){ killsShown=i+1; killfeed.push({a:'KOFFI',b:'SOLDAT '+(i+1),t:KILL_T[i]}); banner="KOFFI — "+(i+1)+(i+1>1?" KILLS":" KILL"); } }
+};
+resize();frame();
+</script>
+</body>
+</html>

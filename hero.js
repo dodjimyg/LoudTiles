@@ -127,26 +127,41 @@ function assemble(g,J,P){
   sphere(head[0],head[1],head[2],0.17,M.SKIN,7,10);
   boxT(onF(head,hF,[0,-0.09,0.11]),[0.22,0.15,0.22],M.SKIN,hF.R);   // jaw
   boxT(onF(head,hF,[0,-0.03,0.18]),[0.06,0.08,0.07],M.SKIN,hF.R);   // nose
-  boxT(onF(head,hF,[0,0.045,0.175]),[0.37,0.05,0.05],M.GLASS,hF.R); // glasses top
-  boxT(onF(head,hF,[0,-0.005,0.170]),[0.37,0.022,0.05],M.GLASS,hF.R);// glasses bottom
+  // eyewear: white shades (Koffi) or dark goggles (soldier)
+  const eyeMat=(P.eyes==='dark')?M.LENS:M.GLASS;
+  boxT(onF(head,hF,[0,0.045,0.175]),[0.37,0.05,0.05],eyeMat,hF.R);
+  boxT(onF(head,hF,[0,-0.005,0.170]),[0.37,0.022,0.05],eyeMat,hF.R);
   for(const s of[-1,1]){
     boxT(onF(head,hF,[s*0.095,0.015,0.195]),[0.155,0.085,0.02],M.LENS,hF.R);
-    limb(onF(head,hF,[s*0.175,0.03,0.16]),onF(head,hF,[s*0.19,0.03,-0.06]),0.013,M.GLASS);
+    limb(onF(head,hF,[s*0.175,0.03,0.16]),onF(head,hF,[s*0.19,0.03,-0.06]),0.013,eyeMat);
   }
-  boxT(onF(head,hF,[0,0.02,0.205]),[0.05,0.05,0.02],M.GLASS,hF.R);  // bridge
-  const puffs=[
-    [0,0.21,-0.02],[0.23,0.15,0.0],[-0.23,0.15,0.0],[0.16,0.09,-0.21],[-0.16,0.09,-0.21],
-    [0.28,0.01,-0.07],[-0.28,0.01,-0.07],[0.13,0.25,-0.08],[-0.13,0.25,-0.08],[0,0.13,-0.26],
-    [0.21,0.21,-0.15],[-0.21,0.21,-0.15],[0.25,-0.11,0.0],[-0.25,-0.11,0.0],[0,0.28,0.03],
-    [0.11,0.0,0.17],[-0.11,0.0,0.17],[0.05,0.30,-0.16],[-0.05,0.30,-0.16]];
-  for(const p of puffs){const c=onF(head,hF,p);blob(c[0],c[1],c[2],0.17,0.16,0.17,M.HAIR,5,7);}
-  // rifle (prone/aim)
-  if(P.rifle){
-    const f=frameR(P.rifleFwd,[0,1,0]).f, hR=J.handR, hL=J.handL;
-    limb(V(hR,S(f,-0.10)),V(hR,S(f,0.55)),0.028,M.METAL);          // barrel/handguard
-    limb(hL,V(hL,S(f,-0.32)),0.05,M.GEAR);                         // stock
-    limb(V(hR,S(f,0.02)),V(hR,[0,-0.16,0]),0.04,M.GEAR);           // magazine
-    boxT(V(hR,S(f,-0.02)),[0.06,0.12,0.30],M.GEAR,frameR(f,[0,1,0]).R); // receiver
+  boxT(onF(head,hF,[0,0.02,0.205]),[0.05,0.05,0.02],eyeMat,hF.R);
+  if(P.headgear==='helmet'){
+    // combat helmet dome + brim + chin strap
+    blob(onF(head,hF,[0,0.08,-0.02])[0],onF(head,hF,[0,0.08,-0.02])[1],onF(head,hF,[0,0.08,-0.02])[2],0.20,0.17,0.21,M.GEAR,6,8);
+    boxT(onF(head,hF,[0,0.14,0.10]),[0.36,0.06,0.10],M.GEAR,hF.R);   // brim
+    limb(onF(head,hF,[-0.15,-0.06,0.10]),onF(head,hF,[0.15,-0.06,0.10]),0.02,M.GEAR); // strap
+  } else {
+    const puffs=[
+      [0,0.21,-0.02],[0.23,0.15,0.0],[-0.23,0.15,0.0],[0.16,0.09,-0.21],[-0.16,0.09,-0.21],
+      [0.28,0.01,-0.07],[-0.28,0.01,-0.07],[0.13,0.25,-0.08],[-0.13,0.25,-0.08],[0,0.13,-0.26],
+      [0.21,0.21,-0.15],[-0.21,0.21,-0.15],[0.25,-0.11,0.0],[-0.25,-0.11,0.0],[0,0.28,0.03],
+      [0.11,0.0,0.17],[-0.11,0.0,0.17],[0.05,0.30,-0.16],[-0.05,0.30,-0.16]];
+    for(const p of puffs){const c=onF(head,hF,p);blob(c[0],c[1],c[2],0.17,0.16,0.17,M.HAIR,5,7);}
+  }
+  // weapon
+  if(P.gun){
+    const f=frameR(P.gunFwd||[0,0,1],[0,1,0]).f, hR=J.handR, hL=J.handL, gR=frameR(f,[0,1,0]).R;
+    if(P.gun==='pistol'){
+      limb(V(hR,S(f,-0.02)),V(hR,S(f,0.22)),0.026,M.METAL);         // slide/barrel
+      boxT(V(hR,S(f,0.02)),[0.05,0.09,0.14],M.GEAR,gR);             // frame
+      limb(V(hR,S(f,-0.01)),V(hR,[0,-0.14,0]),0.03,M.GEAR);         // grip
+    } else {
+      limb(V(hR,S(f,-0.10)),V(hR,S(f,0.55)),0.028,M.METAL);         // barrel/handguard
+      limb(hL,V(hL,S(f,-0.32)),0.05,M.GEAR);                        // stock
+      limb(V(hR,S(f,0.02)),V(hR,[0,-0.16,0]),0.04,M.GEAR);          // magazine
+      boxT(V(hR,S(f,-0.02)),[0.06,0.12,0.30],M.GEAR,gR);            // receiver
+    }
   }
 }
 
@@ -177,27 +192,64 @@ const POSES={
        hipL:[-0.15,1.02,0],hipR:[0.15,1.02,0],pelvis:[0,1.00,0],chest:[0,1.55,0.03],neck:[0,1.66,0.03],head:[0,1.90,0.06],
        shoulderL:[-0.32,1.55,0.03],shoulderR:[0.32,1.55,0.03],elbowL:[-0.35,1.22,0.06],elbowR:[0.33,1.20,0.10],
        handL:[-0.33,0.92,0.10],handR:[0.30,0.90,0.16]}},
-  prone_aim:{ centerY:0.5, footFwd:[0,0,-1], bodyFwd:[0,-0.15,1], bodyUp:[0,1,0.15], headFwd:[0,0.05,1], headUp:[0,1,0], rifle:true, rifleFwd:[0,0,1],
+  prone_aim:{ centerY:0.5, footFwd:[0,0,-1], bodyFwd:[0,-0.15,1], bodyUp:[0,1,0.15], headFwd:[0,0.05,1], headUp:[0,1,0], gun:'rifle', gunFwd:[0,0,1],
     J:{footL:[-0.17,0.12,-1.65],footR:[0.17,0.12,-1.65],kneeL:[-0.18,0.18,-1.05],kneeR:[0.18,0.18,-1.05],
        hipL:[-0.16,0.26,-0.55],hipR:[0.16,0.26,-0.55],pelvis:[0,0.27,-0.55],chest:[0,0.34,0.12],neck:[0,0.38,0.28],head:[0,0.46,0.48],
        shoulderL:[-0.28,0.38,0.16],shoulderR:[0.28,0.38,0.16],elbowL:[-0.28,0.16,0.48],elbowR:[0.26,0.16,0.52],
        handL:[-0.06,0.22,0.74],handR:[0.06,0.22,0.80]}},
+  // ---- extra Koffi poses for the scripted scene ----
+  aim_pistol:{ centerY:1.45, footFwd:[0,0,1], bodyFwd:[0,0,1], bodyUp:[0,1,0], headFwd:[0,-0.05,1], headUp:[0,1,0], gun:'pistol', gunFwd:[0,0,1],
+    J:{footL:[-0.18,0.17,-0.05],footR:[0.16,0.17,0.10],kneeL:[-0.17,0.62,-0.02],kneeR:[0.16,0.62,0.10],
+       hipL:[-0.16,1.02,0],hipR:[0.16,1.02,0],pelvis:[0,1.00,0],chest:[0,1.55,0.04],neck:[0,1.66,0.04],head:[0,1.90,0.06],
+       shoulderL:[-0.32,1.55,0.03],shoulderR:[0.32,1.55,0.03],elbowL:[-0.20,1.48,0.30],elbowR:[0.30,1.52,0.34],
+       handL:[0.02,1.50,0.52],handR:[0.12,1.52,0.60]}},
+  stand:{ centerY:1.45, footFwd:[0,0,1], bodyFwd:[0,0,1], bodyUp:[0,1,0], headFwd:[0,-0.03,1], headUp:[0,1,0],
+    J:{footL:[-0.18,0.17,0.0],footR:[0.18,0.17,0.0],kneeL:[-0.17,0.62,0.04],kneeR:[0.17,0.62,0.04],
+       hipL:[-0.16,1.02,0],hipR:[0.16,1.02,0],pelvis:[0,1.00,0],chest:[0,1.55,0.03],neck:[0,1.66,0.03],head:[0,1.90,0.05],
+       shoulderL:[-0.32,1.55,0.03],shoulderR:[0.32,1.55,0.03],elbowL:[-0.34,1.24,0.06],elbowR:[0.34,1.24,0.06],
+       handL:[-0.34,0.94,0.10],handR:[0.34,0.94,0.10]}},
+  kneel_reach:{ centerY:1.0, footFwd:[0,0,1], bodyFwd:[0,-0.1,1], bodyUp:[0,1,0.1], headFwd:[0,-0.15,1], headUp:[0,1,0.15],
+    J:{footL:[-0.18,0.17,0.35],footR:[0.20,0.10,-0.30],kneeL:[-0.18,0.60,0.34],kneeR:[0.20,0.16,-0.05],
+       hipL:[-0.16,0.66,-0.02],hipR:[0.16,0.60,-0.08],pelvis:[0,0.64,-0.05],chest:[0,1.14,0.04],neck:[0,1.24,0.05],head:[0,1.46,0.10],
+       shoulderL:[-0.30,1.14,0.05],shoulderR:[0.30,1.14,0.06],elbowL:[-0.30,0.90,0.18],elbowR:[0.28,0.95,0.34],
+       handL:[-0.22,0.66,0.20],handR:[0.10,0.80,0.62]}},
+  walk:{ centerY:1.45, footFwd:[0,0,1], bodyFwd:[0,0,1], bodyUp:[0,1,0], headFwd:[0,-0.02,1], headUp:[0,1,0],
+    J:{footL:[-0.16,0.20,0.30],footR:[0.16,0.14,-0.32],kneeL:[-0.16,0.64,0.18],kneeR:[0.16,0.56,-0.16],
+       hipL:[-0.15,1.0,0.04],hipR:[0.15,1.0,-0.04],pelvis:[0,1.0,0],chest:[0,1.55,0.02],neck:[0,1.66,0.02],head:[0,1.90,0.04],
+       shoulderL:[-0.32,1.55,0.02],shoulderR:[0.32,1.55,0.02],elbowL:[-0.33,1.3,-0.06],elbowR:[0.33,1.3,0.14],
+       handL:[-0.30,1.06,-0.14],handR:[0.30,1.06,0.20]}},
 };
 const POSE_LIST=['crouch_fists','crouch_rest','sit_fists','grip_scarf','stand_profile','prone_aim'];
 
-function buildHero(g,O,poseName){
+// enemy soldiers: helmet + goggles + rifle
+const SOLDIER_POSES={
+  aim:{ centerY:1.45, headgear:'helmet', eyes:'dark', footFwd:[0,0,1], bodyFwd:[0,0,1], bodyUp:[0,1,0], headFwd:[0,-0.05,1], headUp:[0,1,0], gun:'rifle', gunFwd:[0,0,1],
+    J:{footL:[-0.18,0.17,0.0],footR:[0.18,0.17,0.05],kneeL:[-0.17,0.62,0.04],kneeR:[0.17,0.62,0.05],
+       hipL:[-0.16,1.02,0],hipR:[0.16,1.02,0],pelvis:[0,1.00,0],chest:[0,1.52,0.03],neck:[0,1.63,0.03],head:[0,1.86,0.05],
+       shoulderL:[-0.32,1.52,0.03],shoulderR:[0.32,1.52,0.03],elbowL:[-0.22,1.40,0.28],elbowR:[0.30,1.34,0.16],
+       handL:[-0.04,1.44,0.46],handR:[0.10,1.40,0.30]}},
+  advance:{ centerY:1.45, headgear:'helmet', eyes:'dark', footFwd:[0,0,1], bodyFwd:[0,0,1], bodyUp:[0,1,0], headFwd:[0,-0.05,1], headUp:[0,1,0], gun:'rifle', gunFwd:[0,0,1],
+    J:{footL:[-0.16,0.20,0.28],footR:[0.16,0.14,-0.28],kneeL:[-0.16,0.64,0.16],kneeR:[0.16,0.56,-0.14],
+       hipL:[-0.15,1.0,0.02],hipR:[0.15,1.0,-0.02],pelvis:[0,1.0,0],chest:[0,1.52,0.03],neck:[0,1.63,0.03],head:[0,1.86,0.05],
+       shoulderL:[-0.32,1.52,0.03],shoulderR:[0.32,1.52,0.03],elbowL:[-0.24,1.36,0.22],elbowR:[0.30,1.30,0.12],
+       handL:[-0.06,1.34,0.40],handR:[0.10,1.30,0.26]}},
+};
+
+function buildFrom(g,O,src){
   O=O||[0,0,0];
-  const src=POSES[poseName]||POSES.crouch_fists;
   const J={}; const yaw=src.yaw||0, cy=Math.cos(yaw), sy=Math.sin(yaw);
   for(const k in src.J){const p=src.J[k];
     const x=p[0]*cy+p[2]*sy, z=-p[0]*sy+p[2]*cy;      // yaw about vertical
     J[k]=[O[0]+x,O[1]+p[1],O[2]+z];}
   const rot=v=>[v[0]*cy+v[2]*sy,v[1],-v[0]*sy+v[2]*cy];
   const P={bodyFwd:rot(src.bodyFwd),bodyUp:rot(src.bodyUp),headFwd:rot(src.headFwd),headUp:rot(src.headUp),
-    footFwd:rot(src.footFwd),rifle:src.rifle,rifleFwd:src.rifleFwd?rot(src.rifleFwd):[0,0,1]};
+    footFwd:rot(src.footFwd),gun:src.gun,gunFwd:src.gunFwd?rot(src.gunFwd):[0,0,1],
+    headgear:src.headgear||'afro',eyes:src.eyes||'white'};
   assemble(g,J,P);
   return {centerY:src.centerY};
 }
+function buildHero(g,O,poseName){return buildFrom(g,O,POSES[poseName]||POSES.crouch_fists);}
+function buildSoldier(g,O,poseName){return buildFrom(g,O,SOLDIER_POSES[poseName]||SOLDIER_POSES.aim);}
 
 // ------------------------------------------------------- shared material GLSL
 // noise + procedural materials. Requires uniforms: uSky (vec3), uTime (float).
@@ -234,4 +286,5 @@ void material(float m,vec3 p,out vec3 alb,out vec3 emi){
 
 window.Geo=Geo; window.MATID=MATID; window.buildHero=buildHero; window.MAT_GLSL=MAT_GLSL;
 window.POSES=POSES; window.POSE_LIST=POSE_LIST;
+window.buildSoldier=buildSoldier; window.SOLDIER_POSES=SOLDIER_POSES;
 })();
