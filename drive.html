@@ -194,11 +194,15 @@ setKoffi('drive');
 
 //////////////////// portal rings ////////////////////
 function buildPortal(g){
-  for(let ring=0;ring<3;ring++){ const rad=1.4+ring*0.5; const mat=ring%2?M.NEONP:M.NEONC;
-    const n=28; for(let k=0;k<n;k++){const a=k/n*6.28;
-      g.box(Math.cos(a)*rad, 2.0+Math.sin(a)*rad, 0, 0.16,0.16,0.16, mat);}}
+  for(let ring=0;ring<2;ring++){ const rad=1.7+ring*0.35; const mat=ring%2?M.NEONP:M.NEONC;
+    const n=34; for(let k=0;k<n;k++){const a=k/n*6.28;
+      g.box(Math.cos(a)*rad, 2.0+Math.sin(a)*rad, 0, 0.14,0.14,0.14, mat);}}
 }
 const portGeo=Geo(); buildPortal(portGeo); const PORT=upload(portGeo);
+
+// protagonist model (for the third-person exit / walk into the portal)
+const protGeo=Geo(); buildHero(protGeo,[0,0,0],'walk'); const PROT=upload(protGeo);
+const PROT_TINT=[0.95,0.82,0.72];
 
 //////////////////// programs ////////////////////
 const sceneProg=prog(`
@@ -264,13 +268,17 @@ const bbProg=prog(`attribute vec2 c;uniform mat4 uVP;uniform vec3 uPos,uR,uU;uni
 void main(){v=c;vec3 w=uPos+uR*c.x*uS+uU*c.y*uS;gl_Position=uVP*vec4(w,1.0);}`,
 `precision highp float;varying vec2 v;uniform float uT,uAlpha;
 float hash(vec2 p){return fract(sin(dot(p,vec2(41.1,289.7)))*43758.5);}
-void main(){float r=length(v); if(r>1.0)discard;
- float ang=atan(v.y,v.x); float sw=0.5+0.5*sin(ang*6.0+uT*4.0 - r*10.0);
- float core=smoothstep(1.0,0.0,r);
- vec3 col=mix(vec3(0.2,1.0,1.4), vec3(1.4,0.3,1.1), sw);
- col=mix(col, vec3(1.2,1.0,1.4), core*core);
- float a=core*(0.5+0.5*sw)*uAlpha;
- gl_FragColor=vec4(col*a*1.6, a);}`);
+void main(){float r=length(v); if(r>1.05)discard;
+ float ang=atan(v.y,v.x);
+ // electric ring with jagged lightning around radius ~0.82
+ float jag=(hash(vec2(floor(ang*14.0),floor(uT*11.0)))-0.5)*0.12
+          + 0.05*sin(ang*22.0+uT*9.0);
+ float ring=smoothstep(0.14,0.0,abs(r-0.82));
+ float bolt=smoothstep(0.06,0.0,abs(r-0.82-jag));
+ float inner=smoothstep(1.0,0.0,r)*0.22;                 // faint plasma fill
+ vec3 col=mix(vec3(0.25,0.5,1.7), vec3(0.85,0.35,1.6), 0.5+0.5*sin(ang*3.0-uT*2.0));
+ float a=(ring*0.7 + bolt*1.3 + inner)*uAlpha;
+ gl_FragColor=vec4(col*a*1.9, a);}`);
 const bL={c:gl.getAttribLocation(bbProg,'c'),uVP:gl.getUniformLocation(bbProg,'uVP'),uPos:gl.getUniformLocation(bbProg,'uPos'),
  uR:gl.getUniformLocation(bbProg,'uR'),uU:gl.getUniformLocation(bbProg,'uU'),uS:gl.getUniformLocation(bbProg,'uS'),uT:gl.getUniformLocation(bbProg,'uT'),uAlpha:gl.getUniformLocation(bbProg,'uAlpha')};
 const quad=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,quad);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,1,1,-1,-1,1,1,-1,1]),gl.STATIC_DRAW);
@@ -308,64 +316,76 @@ function buildTargets(){if(tex)gl.deleteTexture(tex);if(fbo)gl.deleteFramebuffer
 
 const SUN=norm([0.0,0.22,-1.0]), SKYC=[0.55,0.28,0.6];
 
-//////////////////// SCENARIO ////////////////////
-const V0=16, T_DECEL=17.5, DECEL_DUR=4.0, DUR=34;
+//////////////////// SCENARIO (follows the storyboard) ////////////////////
+const V0=16, T_DECEL=20.0, DECEL_DUR=3.5, DUR=35;
 function scrollDist(t){ let s=0, dt=0.08; for(let x=0;x<t;x+=dt){ let v=V0; if(x>T_DECEL) v=V0*(1.0-sstep((x-T_DECEL)/DECEL_DUR)); s+=v*dt; } return s; }
 const STOP_DIST=scrollDist(T_DECEL+DECEL_DUR+1);
 const carZ=t=>-scrollDist(t);
-const PORTAL_Z=-STOP_DIST-8.5;
-const SEAT=[0.36,1.02,0.4];               // passenger seat offset within car space
+const STOPZ=-STOP_DIST;
+const PORTAL_Z=STOPZ-8.0;
+const SEAT=[0.36,1.02,0.4];
+const isExt=t=>(t<3.5 || t>=25);
 
-// where the POV head looks: forward / right window / left at Koffi
+// narration captions [start,end,text]; panel 7 is Koffi's speech bubble
+const CAPS=[
+ [0.2,3.5,"ON ROULE.\nLA VILLE EST DÉTRUITE, MAIS ELLE BRILLE ENCORE."],
+ [3.5,6.5,"JE REGARDE PAR LA VITRE."],
+ [6.5,9.5,"JE REGARDE KOFFI."],
+ [9.5,11.5,"JE REGARDE À NOUVEAU PAR LA VITRE."],
+ [11.5,14.5,"DES GENS SE BATTENT. DES MAGASINS DÉTRUITS.\nTOUT PART EN MORCEAUX."],
+ [14.5,17,"JE REGARDE KOFFI."],
+ [20.2,24,"DEVANT NOUS,\nUN PORTAIL D'ÉNERGIE APPARAÎT."],
+ [25,30,"LA VOITURE S'ARRÊTE DEVANT.\nON SORT."],
+ [30,35,"ON ENTRE DANS LE PORTAIL."],
+];
+const KOFFI_LINE=[17,20.2,"ÉCOUTE. CE MONDE EST MORT.\nMAIS IL RESTE DES PORTAILS.\nON VA EN TROUVER UN AUTRE."];
+function capAt(t){for(const c of CAPS)if(t>=c[0]&&t<c[1])return c;return null;}
+
 function headTarget(t){
-  // sequence of glances
-  if(t<4) return 'fwd';
-  if(t<7) return 'right';
-  if(t<10) return 'koffi';
-  if(t<15) return 'right';
-  if(t<18) return 'koffi';
-  if(t<26) return 'fwd';
-  return 'fwd';
+  if(t<3.5) return 'ext';
+  if(t<6.5) return 'right';
+  if(t<9.5) return 'koffi';
+  if(t<14.5) return 'right';
+  if(t<20.2) return 'koffi';     // look at Koffi, he speaks
+  if(t<25) return 'fwd';         // portal ahead
+  return 'ext';
 }
 function koffiState(t){
-  // driver seat, rides with the car (x negative). Looks at passenger during 15-18.
   const cz=carZ(t);
-  if(t<24){ const look=(headTarget(t)==='koffi')?'drive_look':'drive';
-    return {pose:look, pos:[-0.36, 0, cz+0.4], yaw:0, vis:true}; }
-  // gets out and walks into the portal
-  const k=sstep((t-24.5)/6.0);
-  const z=lerp(cz-2.2, PORTAL_Z, k);
-  return {pose:'walk', pos:[lerp(-0.9,0.0,sstep((t-24.5)/2)), 0, z], yaw:Math.PI, vis:t<32.5};
+  if(t<25){ const look=(t>=14.5&&t<20.2)?'drive_look':'drive';
+    return {pose:look, pos:[-0.36,0,cz+0.4], yaw:0, vis:!(t<3.5), tint:[1,1,1]}; }
+  // step out (driver side) and walk into the portal
+  const k=sstep((t-26)/6.5);
+  return {pose:'walk', pos:[lerp(-0.9,-0.5,sstep((t-25)/2)),0,lerp(STOPZ-1.5,PORTAL_Z+0.6,k)], yaw:Math.PI, vis:t<33.5, tint:[1,1,1]};
+}
+function protagState(t){   // only shown in the third-person exit
+  if(t<25) return {vis:false};
+  const k=sstep((t-26)/6.5);
+  return {vis:t<33.5, pose:'walk', pos:[lerp(0.9,0.5,sstep((t-25)/2)),0,lerp(STOPZ-1.5,PORTAL_Z+0.6,k)], yaw:Math.PI, tint:PROT_TINT};
 }
 function cameraState(t){
   const cz=carZ(t);
-  let eye,center;
-  if(t<24){ // inside; camera + gaze shift per glance
-    const look=headTarget(t);
-    let dir;
-    if(look==='koffi'){ eye=[SEAT[0],SEAT[1],cz+SEAT[2]]; dir=[-0.90,0.42,0.02]; }  // up-left at the driver's face
-    else if(look==='right'){ eye=[0.42,1.06,cz+0.35]; dir=[0.95,-0.05,-0.22]; }      // out the side window
-    else { eye=[SEAT[0],SEAT[1],cz+SEAT[2]]; dir=[0.0,-0.02,-1.0]; }                 // forward
-    center=[eye[0]+dir[0], eye[1]+dir[1], eye[2]+dir[2]];
-    eye[1]+=Math.sin(t*8)*0.01;
-  } else if(t<26.5){ // opening door / turning to exit
-    const k=sstep((t-24)/2.5);
-    eye=[lerp(SEAT[0],1.5,k), lerp(SEAT[1],1.5,k), cz+SEAT[2]];
-    center=[eye[0]-0.2, eye[1]-0.2, lerp(cz-1.0, PORTAL_Z, 0.15)];
-  } else { // step out and walk into the portal
-    const k=sstep((t-26.5)/6.0);
-    eye=[lerp(1.5,0.0,k), lerp(1.5,1.5,1.0), lerp(cz+SEAT[2], PORTAL_Z+0.6, k)];
-    eye[1]=1.5+Math.sin(t*7)*0.03;
-    center=[0.0,1.6,PORTAL_Z];
+  let eye,center,fov=1.15;
+  if(t<3.5){ // EXT establishing — behind/side of the DeLorean
+    eye=[-3.2,1.9,cz+6.5]; center=[0.2,1.0,cz+1.0]; fov=1.05;
+  } else if(t<25){ // INT POV
+    const look=headTarget(t); let dir;
+    if(look==='koffi'){ eye=[SEAT[0],SEAT[1],cz+SEAT[2]]; dir=[-0.90,0.42,0.02]; }
+    else if(look==='right'){ eye=[0.42,1.06,cz+0.35]; dir=[0.95,-0.05,-0.22]; }
+    else { eye=[SEAT[0],SEAT[1],cz+SEAT[2]]; dir=[0.0,-0.02,-1.0]; }
+    center=[eye[0]+dir[0],eye[1]+dir[1],eye[2]+dir[2]]; eye[1]+=Math.sin(t*8)*0.01;
+  } else { // EXT behind — they get out and walk into the portal
+    const push=sstep((t-25)/9);
+    eye=[0.0, 1.95, lerp(STOPZ+6.5, STOPZ+3.5, push)];
+    center=[0.0,1.5,PORTAL_Z]; fov=1.1;
   }
-  return {eye,center,fov:1.15};
+  return {eye,center,fov};
 }
 function portalState(t){
-  const grow=sstep((t-14)/5.0);         // appears & grows 14..19
-  return {vis:t>14, scale:0.2+grow*1.0, alpha:grow};
+  const grow=sstep((t-17.5)/4.5);       // appears & grows
+  return {vis:t>17.5, scale:0.25+grow*1.0, alpha:grow};
 }
-// enter-portal white/pink flash (2D overlay), 30.5..34
-function flashAt(t){ if(t<30.5) return 0; return sstep((t-30.5)/2.5); }
+function flashAt(t){ if(t<31.5) return 0; return sstep((t-31.5)/2.6); }
 function fadeAt(t){ let f=1.0; if(t<0.8)f*=sstep(t/0.8); if(t>DUR-1.2)f*=sstep((DUR-t)/1.2); return f; }
 
 //////////////////// draw ////////////////////
@@ -406,9 +426,10 @@ function drawFrame(t){
   const base=Math.floor(cz/SEG);
   for(let k=2;k>=-5;k--){ const zoff=(base+k)*SEG; drawMesh(CITY,T4(0,0,zoff)); }
   drawMesh(FIX,I4);   // fixed brawls + destroyed shops timed to the window glances
-  // car interior (cockpit) while inside; full car exterior once we've stepped out
-  if(t>=26.6) drawMesh(CAR,T4(0,0,cz)); else drawMesh(COCK,T4(0,0,cz));
-  if(kof.vis) drawMesh(KOF, modelYaw(kof.pos, kof.yaw));
+  // exterior car (establishing + exit) vs interior cockpit (POV)
+  if(isExt(t)) drawMesh(CAR,T4(0,0,cz)); else drawMesh(COCK,T4(0,0,cz));
+  if(kof.vis) drawMesh(KOF, modelYaw(kof.pos, kof.yaw), kof.tint);
+  const pro=protagState(t); if(pro.vis) drawMesh(PROT, modelYaw(pro.pos,pro.yaw), pro.tint);
   // portal rings
   if(por.vis){ const pm=mul(mul(T4(0,0,PORTAL_Z),RZ4(t*0.6)),SC4(por.scale)); drawMesh(PORT,pm); }
 
@@ -431,7 +452,8 @@ function drawFrame(t){
   gl.drawArrays(gl.TRIANGLES,0,6);
 }
 
-//////////////////// HUD (minimal, no subtitles) ////////////////////
+//////////////////// HUD (captions + Koffi speech bubble, per storyboard) //////
+function rr(c,x,y,w,h,r){c.beginPath();c.moveTo(x+r,y);c.arcTo(x+w,y,x+w,y+h,r);c.arcTo(x+w,y+h,x,y+h,r);c.arcTo(x,y+h,x,y,r);c.arcTo(x,y,x+w,y,r);c.closePath();}
 function drawHUD(t){
   const w=stage.width,h=stage.height,s=w/1440;
   ctx.save();ctx.textBaseline="top";
@@ -440,15 +462,37 @@ function drawHUD(t){
   // digital HUD tag + speed
   ctx.fillStyle="rgba(255,150,230,0.75)";ctx.font=`${Math.round(13*s)}px "Courier New",monospace`;
   ctx.textAlign="left";ctx.fillText("LOUDTILES // aggr0 drlft",20*s,bar+10*s);
-  const sp = t<T_DECEL?188:(t>22?0:Math.round(188*(1-sstep((t-T_DECEL)/DECEL_DUR))));
+  const sp = t<T_DECEL?188:(t>=T_DECEL+DECEL_DUR?0:Math.round(188*(1-sstep((t-T_DECEL)/DECEL_DUR))));
   ctx.textAlign="right";ctx.fillStyle="rgba(120,240,255,0.8)";ctx.font=`${Math.round(22*s)}px "Courier New",monospace`;
   ctx.fillText(sp+" KM/H", w-24*s, h-bar-34*s);
-  if(t>=14&&t<24){ctx.fillStyle="rgba(255,120,230,0.9)";ctx.font=`${Math.round(14*s)}px "Courier New",monospace`;
-    ctx.fillText((t<22?"⚠ ANOMALIE DÉTECTÉE":"■ PORTAIL"), w-24*s, h-bar-58*s);}
-  // enter-portal flash
+  if(t>=17.5&&t<25){ctx.fillStyle="rgba(140,180,255,0.9)";ctx.font=`${Math.round(14*s)}px "Courier New",monospace`;
+    ctx.fillText((t<23.5?"⚠ ANOMALIE DÉTECTÉE":"■ PORTAIL"), w-24*s, h-bar-58*s);}
+  // narration caption (top-left box)
+  const cap=capAt(t);
+  if(cap){ const age=t-cap[0], fade=Math.min(1,age/0.35)*Math.min(1,(cap[1]-t)/0.35);
+    ctx.globalAlpha=Math.max(0,fade); ctx.textAlign="left";
+    const lines=cap[2].split("\n"); ctx.font=`bold ${Math.round(19*s)}px "Courier New",monospace`;
+    let tw=0; for(const L of lines) tw=Math.max(tw,ctx.measureText(L).width);
+    const px=26*s, py=bar+26*s, pad=12*s, lh=25*s;
+    ctx.fillStyle="rgba(0,0,0,0.72)"; ctx.fillRect(px,py,tw+pad*2,lines.length*lh+pad*1.2);
+    ctx.fillStyle="#f3efe6"; for(let i=0;i<lines.length;i++) ctx.fillText(lines[i],px+pad,py+pad*0.6+i*lh);
+    ctx.globalAlpha=1;
+  }
+  // Koffi speech bubble (panel 7)
+  if(t>=KOFFI_LINE[0]&&t<KOFFI_LINE[1]){ const age=t-KOFFI_LINE[0],fade=Math.min(1,age/0.3)*Math.min(1,(KOFFI_LINE[1]-t)/0.3);
+    ctx.globalAlpha=Math.max(0,fade); ctx.textAlign="center";
+    const lines=KOFFI_LINE[2].split("\n"); ctx.font=`bold ${Math.round(18*s)}px "Courier New",monospace`;
+    let tw=0; for(const L of lines) tw=Math.max(tw,ctx.measureText(L).width);
+    const cx=w*0.68, lh=25*s, bw=tw+42*s, bh=lines.length*lh+22*s, bx=cx-bw/2, by=bar+34*s;
+    ctx.fillStyle="rgba(246,246,246,0.96)"; rr(ctx,bx,by,bw,bh,14*s); ctx.fill();
+    ctx.beginPath();ctx.moveTo(bx+bw*0.22,by+bh-2);ctx.lineTo(bx+bw*0.06,by+bh+24*s);ctx.lineTo(bx+bw*0.40,by+bh-2);ctx.closePath();ctx.fill();
+    ctx.fillStyle="#111"; for(let i=0;i<lines.length;i++) ctx.fillText(lines[i],cx,by+12*s+i*lh);
+    ctx.globalAlpha=1;
+  }
+  // enter-portal flash (electric blue/violet)
   const fl=flashAt(t);
-  if(fl>0){ const g=ctx.createRadialGradient(w/2,h*0.42,0,w/2,h*0.42,Math.max(w,h)*0.75);
-    g.addColorStop(0,`rgba(255,235,255,${fl})`);g.addColorStop(0.5,`rgba(255,140,240,${fl*0.9})`);g.addColorStop(1,`rgba(120,220,255,${fl*0.4})`);
+  if(fl>0){ const g=ctx.createRadialGradient(w/2,h*0.45,0,w/2,h*0.45,Math.max(w,h)*0.8);
+    g.addColorStop(0,`rgba(230,240,255,${fl})`);g.addColorStop(0.45,`rgba(150,120,255,${fl*0.9})`);g.addColorStop(1,`rgba(80,180,255,${fl*0.4})`);
     ctx.fillStyle=g;ctx.fillRect(0,0,w,h);}
   ctx.restore();
 }

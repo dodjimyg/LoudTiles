@@ -312,7 +312,8 @@ function bbDraw(kind,pos,scale,seed,alpha,right,up){
 function drawFrame(t){
   const cam=cameraState(t), kof=koffiState(t);
   setKoffi(kof.pose);
-  const P=persp(cam.fov,W/H,0.05,200), Vm=lookAt(cam.eye,cam.center,[0,1,0]), VP=mul(P,Vm);
+  const effFov=cam.fov*(W<H?1.0+(1.0-W/H)*0.75:1.0); // widen vertical FOV in portrait (9:16)
+  const P=persp(effFov,W/H,0.05,200), Vm=lookAt(cam.eye,cam.center,[0,1,0]), VP=mul(P,Vm);
 
   // spawn kill events
   for(let i=0;i<3;i++){ if(t>=KILL_T[i] && killsShown<=i){ killsShown=i+1;
