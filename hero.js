@@ -71,79 +71,132 @@ const MATID={AS:0,SKIN:1,CAMO:2,GEAR:3,HAIR:4,GLASS:5,NEON:6,CONC:7,LEAF:8,BURN:
              SCARF:10,TRUNK:11,SOLE:12,LENS:13,METAL:14,PATCH:15};
 
 // ------------------------------------------------------------------ HERO ----
-// Pose: deep tactical crouch, forearms up, fists at cheeks (signature look).
-function buildHero(g,O){
-  O=O||[0,0,0]; const M=MATID;
-  const {box,boxT,limb,sphere,blob}=g;
-  const T=(x,y,z)=>[O[0]+x,O[1]+y,O[2]+z];
+// Joint-driven, pose-able character. A pose = named joint positions + a few
+// body/head orientation vectors. assemble() turns joints into the full model.
+function frameR(fwd,up){const f=norm(fwd);let u=norm(up);const r=norm(cross(u,f));u=cross(f,r);
+  return{R:[r[0],u[0],f[0],r[1],u[1],f[1],r[2],u[2],f[2]],r,u,f};}
+function onF(base,fr,o){return[base[0]+fr.r[0]*o[0]+fr.u[0]*o[1]+fr.f[0]*o[2],
+  base[1]+fr.r[1]*o[0]+fr.u[1]*o[1]+fr.f[1]*o[2],
+  base[2]+fr.r[2]*o[0]+fr.u[2]*o[1]+fr.f[2]*o[2]];}
+const V=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
+const S=(a,k)=>[a[0]*k,a[1]*k,a[2]*k];
+const midp=(a,b)=>[(a[0]+b[0])/2,(a[1]+b[1])/2,(a[2]+b[2])/2];
 
-  // ---- LEGS (deep crouch) ----
-  for(const s of[-1,1]){
-    const ankle=T(s*0.20,0.17,0.20), knee=T(s*0.27,0.55,0.46), hip=T(s*0.17,0.60,-0.02);
-    box(O[0]+s*0.21,O[1]+0.08,O[2]+0.30, 0.21,0.15,0.46, M.GEAR);   // boot upper
-    box(O[0]+s*0.21,O[1]+0.03,O[2]+0.32, 0.23,0.06,0.52, M.SOLE);   // sole
-    box(O[0]+s*0.20,O[1]+0.27,O[2]+0.16, 0.19,0.24,0.22, M.GEAR);   // ankle shaft (laces)
-    limb(ankle,knee,0.13,M.CAMO);   // shin
-    limb(knee,hip,0.16,M.CAMO);     // thigh
-    sphere(knee[0],knee[1],knee[2],0.145,M.GEAR,5,7); // knee pad
-    box(O[0]+s*0.35,O[1]+0.45,O[2]+0.30, 0.10,0.20,0.17, M.CAMO);   // cargo pocket
-  }
-  // ---- PELVIS / BELT ----
-  box(O[0],O[1]+0.60,O[2]-0.01, 0.50,0.26,0.36, M.CAMO);
-  box(O[0],O[1]+0.71,O[2]+0.02, 0.52,0.10,0.38, M.GEAR);            // belt
-  box(O[0]-0.24,O[1]+0.66,O[2]+0.16, 0.12,0.18,0.10, M.GEAR);       // side pouch
-  box(O[0]+0.24,O[1]+0.60,O[2]+0.18, 0.11,0.22,0.11, M.GEAR);       // holster
-  // ---- TORSO ----
-  const pelT=T(0,0.72,0.0), chest=T(0,1.14,0.07);
-  limb(pelT,chest,0.25,M.CAMO);                                     // tee
-  boxT(T(0,1.00,0.22),[0.44,0.52,0.14],M.GEAR,rotX(-0.12));         // plate carrier front
-  for(let i=0;i<3;i++) box(O[0]-0.14+i*0.14,O[1]+0.92,O[2]+0.31, 0.11,0.15,0.09, M.GEAR); // mag pouches
-  box(O[0],O[1]+0.82,O[2]+0.06, 0.50,0.18,0.36, M.GEAR);           // cummerbund
-  limb(T(-0.15,1.20,0.16),T(-0.15,0.82,0.20),0.05,M.GEAR);         // strap L
-  limb(T( 0.15,1.20,0.16),T( 0.15,0.82,0.20),0.05,M.GEAR);         // strap R
-  box(O[0]+0.25,O[1]+1.03,O[2]+0.15, 0.12,0.08,0.03, M.PATCH);     // BABY INVASION patch
-  // ---- BACKPACK + ANTENNA ----
-  box(O[0],O[1]+1.02,O[2]-0.21, 0.42,0.54,0.20, M.GEAR);
-  limb(T(0.17,1.28,-0.24),T(0.21,2.00,-0.26),0.02,M.METAL);        // radio antenna
-  sphere(O[0]+0.21,O[1]+2.00,O[2]-0.26,0.032,M.METAL,4,5);
-  // ---- ARMS (fists at cheeks) ----
-  for(const s of[-1,1]){
-    const sh=T(s*0.30,1.14,0.04), mid=T(s*0.34,0.98,0.15), el=T(s*0.33,0.80,0.24), hand=T(s*0.165,1.37,0.22);
-    sphere(sh[0],sh[1],sh[2],0.135,M.CAMO,5,7);   // deltoid (sleeve)
-    limb(sh,mid,0.10,M.CAMO);                      // upper arm sleeve
-    limb(mid,el,0.088,M.SKIN);                     // lower upper arm (skin)
-    sphere(el[0],el[1],el[2],0.092,M.SKIN,4,6);    // elbow
-    limb(el,hand,0.078,M.SKIN);                    // forearm (tattoo)
+function assemble(g,J,P){
+  const M=MATID; const {box,boxT,limb,sphere,blob}=g;
+  const bF=frameR(P.bodyFwd,P.bodyUp), hF=frameR(P.headFwd,P.headUp);
+  const footFwd=P.footFwd;
+  // legs + arms
+  for(const s of['L','R']){
+    const foot=J['foot'+s],knee=J['knee'+s],hip=J['hip'+s],
+          sh=J['shoulder'+s],el=J['elbow'+s],hand=J['hand'+s];
+    const toe=V(foot,S(footFwd,0.30));
+    limb(V(foot,[0,0.02,0]),V(toe,[0,-0.03,0]),0.115,M.GEAR);   // boot
+    limb(V(foot,[0,-0.03,0]),V(toe,[0,-0.06,0]),0.12,M.SOLE);   // sole
+    limb(foot,knee,0.13,M.CAMO);                                // shin
+    limb(knee,hip,0.16,M.CAMO);                                 // thigh
+    sphere(knee[0],knee[1],knee[2],0.145,M.GEAR,5,7);           // knee pad
+    const am=midp(sh,el);
+    sphere(sh[0],sh[1],sh[2],0.135,M.CAMO,5,7);                 // deltoid
+    limb(sh,am,0.10,M.CAMO);                                    // sleeve
+    limb(am,el,0.088,M.SKIN);                                   // lower upper arm
+    sphere(el[0],el[1],el[2],0.09,M.SKIN,4,6);                  // elbow
+    limb(el,hand,0.078,M.SKIN);                                 // forearm
     sphere(hand[0],hand[1],hand[2],0.098,M.SKIN,5,7);           // fist
-    box(hand[0],hand[1]+0.05,hand[2]+0.02,0.10,0.07,0.11,M.SKIN); // knuckles
   }
-  // ---- NECK / SHEMAGH ----
-  const headBase=T(0,1.34,0.08), head=T(0,1.49,0.10);
-  limb(T(0,1.20,0.07),headBase,0.09,M.SKIN);
-  blob(O[0],O[1]+1.20,O[2]+0.11, 0.20,0.14,0.20, M.SCARF,5,8);     // scarf around neck
-  box(O[0],O[1]+1.03,O[2]+0.22, 0.26,0.22,0.06, M.SCARF);          // hanging front
-  // ---- HEAD ----
+  // pelvis / torso
+  const pel=J.pelvis,chest=J.chest,mid=midp(pel,chest);
+  boxT(pel,[0.5,0.26,0.36],M.CAMO,bF.R);
+  boxT(onF(pel,bF,[0,0.10,0.02]),[0.52,0.10,0.38],M.GEAR,bF.R);     // belt
+  limb(pel,chest,0.25,M.CAMO);                                      // tee
+  boxT(onF(mid,bF,[0,0.08,0.20]),[0.44,0.52,0.14],M.GEAR,bF.R);     // plate carrier
+  for(let i=-1;i<=1;i++){const pp=onF(mid,bF,[i*0.14,-0.02,0.30]);box(pp[0],pp[1],pp[2],0.11,0.15,0.09,M.GEAR);}
+  boxT(onF(mid,bF,[0,-0.18,0.06]),[0.50,0.18,0.36],M.GEAR,bF.R);    // cummerbund
+  limb(onF(chest,bF,[-0.15,0.02,0.12]),onF(mid,bF,[-0.15,-0.15,0.16]),0.05,M.GEAR);
+  limb(onF(chest,bF,[ 0.15,0.02,0.12]),onF(mid,bF,[ 0.15,-0.15,0.16]),0.05,M.GEAR);
+  const patch=onF(chest,bF,[0.24,-0.10,0.15]);box(patch[0],patch[1],patch[2],0.12,0.08,0.03,M.PATCH);
+  // backpack + antenna
+  const bp=onF(chest,bF,[0,-0.05,-0.22]);boxT(bp,[0.42,0.54,0.20],M.GEAR,bF.R);
+  const a0=onF(bp,bF,[0.17,0.10,-0.02]),a1=V(a0,S(bF.u,0.72));
+  limb(a0,a1,0.02,M.METAL);sphere(a1[0],a1[1],a1[2],0.032,M.METAL,4,5);
+  // neck / shemagh / head
+  const neck=J.neck,head=J.head;
+  limb(neck,head,0.09,M.SKIN);
+  const sc=onF(neck,hF,[0,-0.02,0.03]);blob(sc[0],sc[1],sc[2],0.20,0.14,0.20,M.SCARF,5,8);
+  const scf=onF(neck,hF,[0,-0.16,0.14]);boxT(scf,[0.26,0.22,0.06],M.SCARF,hF.R);
   sphere(head[0],head[1],head[2],0.17,M.SKIN,7,10);
-  box(O[0],O[1]+1.41,O[2]+0.12, 0.22,0.15,0.22, M.SKIN);          // jaw
-  box(O[0],O[1]+1.47,O[2]+0.27, 0.06,0.08,0.07, M.SKIN);          // nose
-  box(O[0],O[1]+1.42,O[2]+0.25, 0.10,0.05,0.05, M.SKIN);          // moustache/lip shade area
-  // ---- SUNGLASSES (white frame, dark lens, temples) ----
-  box(O[0],O[1]+1.535,O[2]+0.265, 0.37,0.05,0.05, M.GLASS);        // top bar
-  box(O[0],O[1]+1.475,O[2]+0.260, 0.37,0.022,0.05, M.GLASS);       // bottom bar
+  boxT(onF(head,hF,[0,-0.09,0.11]),[0.22,0.15,0.22],M.SKIN,hF.R);   // jaw
+  boxT(onF(head,hF,[0,-0.03,0.18]),[0.06,0.08,0.07],M.SKIN,hF.R);   // nose
+  boxT(onF(head,hF,[0,0.045,0.175]),[0.37,0.05,0.05],M.GLASS,hF.R); // glasses top
+  boxT(onF(head,hF,[0,-0.005,0.170]),[0.37,0.022,0.05],M.GLASS,hF.R);// glasses bottom
   for(const s of[-1,1]){
-    box(O[0]+s*0.095,O[1]+1.505,O[2]+0.288, 0.155,0.085,0.02, M.LENS); // lens
-    limb(T(s*0.175,1.52,0.26),T(s*0.19,1.52,0.03),0.013,M.GLASS);      // temple arm
+    boxT(onF(head,hF,[s*0.095,0.015,0.195]),[0.155,0.085,0.02],M.LENS,hF.R);
+    limb(onF(head,hF,[s*0.175,0.03,0.16]),onF(head,hF,[s*0.19,0.03,-0.06]),0.013,M.GLASS);
   }
-  box(O[0],O[1]+1.515,O[2]+0.30, 0.05,0.05,0.02, M.GLASS);         // bridge
-  // ---- AFRO (big rounded cluster) ----
-  const hc=[O[0],O[1]+1.57,O[2]+0.04];
+  boxT(onF(head,hF,[0,0.02,0.205]),[0.05,0.05,0.02],M.GLASS,hF.R);  // bridge
   const puffs=[
-    [0,0.21,0],[0.23,0.15,0.02],[-0.23,0.15,0.02],[0.16,0.09,-0.19],[-0.16,0.09,-0.19],
-    [0.28,0.01,-0.05],[-0.28,0.01,-0.05],[0.13,0.25,-0.06],[-0.13,0.25,-0.06],[0,0.13,-0.24],
-    [0.21,0.21,-0.13],[-0.21,0.21,-0.13],[0.25,-0.11,0.02],[-0.25,-0.11,0.02],[0,0.28,0.05],
-    [0.11,0.0,0.19],[-0.11,0.0,0.19],[0.05,0.30,-0.14],[-0.05,0.30,-0.14]];
-  for(let i=0;i<puffs.length;i++){const p=puffs[i];
-    blob(hc[0]+p[0],hc[1]+p[1],hc[2]+p[2], 0.17,0.16,0.17, M.HAIR,5,7);}
+    [0,0.21,-0.02],[0.23,0.15,0.0],[-0.23,0.15,0.0],[0.16,0.09,-0.21],[-0.16,0.09,-0.21],
+    [0.28,0.01,-0.07],[-0.28,0.01,-0.07],[0.13,0.25,-0.08],[-0.13,0.25,-0.08],[0,0.13,-0.26],
+    [0.21,0.21,-0.15],[-0.21,0.21,-0.15],[0.25,-0.11,0.0],[-0.25,-0.11,0.0],[0,0.28,0.03],
+    [0.11,0.0,0.17],[-0.11,0.0,0.17],[0.05,0.30,-0.16],[-0.05,0.30,-0.16]];
+  for(const p of puffs){const c=onF(head,hF,p);blob(c[0],c[1],c[2],0.17,0.16,0.17,M.HAIR,5,7);}
+  // rifle (prone/aim)
+  if(P.rifle){
+    const f=frameR(P.rifleFwd,[0,1,0]).f, hR=J.handR, hL=J.handL;
+    limb(V(hR,S(f,-0.10)),V(hR,S(f,0.55)),0.028,M.METAL);          // barrel/handguard
+    limb(hL,V(hL,S(f,-0.32)),0.05,M.GEAR);                         // stock
+    limb(V(hR,S(f,0.02)),V(hR,[0,-0.16,0]),0.04,M.GEAR);           // magazine
+    boxT(V(hR,S(f,-0.02)),[0.06,0.12,0.30],M.GEAR,frameR(f,[0,1,0]).R); // receiver
+  }
+}
+
+// ---- pose library (joint positions, before world offset O) ----
+const POSES={
+  crouch_fists:{ centerY:1.0, footFwd:[0,0,1], bodyFwd:[0,0,1], bodyUp:[0,1,0], headFwd:[0,-0.2,1], headUp:[0,1,0.2],
+    J:{footL:[-0.20,0.17,0.20],footR:[0.20,0.17,0.20],kneeL:[-0.27,0.55,0.46],kneeR:[0.27,0.55,0.46],
+       hipL:[-0.17,0.60,-0.02],hipR:[0.17,0.60,-0.02],pelvis:[0,0.60,0],chest:[0,1.14,0.07],neck:[0,1.24,0.07],head:[0,1.49,0.10],
+       shoulderL:[-0.30,1.14,0.04],shoulderR:[0.30,1.14,0.04],elbowL:[-0.33,0.80,0.24],elbowR:[0.33,0.80,0.24],
+       handL:[-0.165,1.37,0.22],handR:[0.165,1.37,0.22]}},
+  crouch_rest:{ centerY:0.95, footFwd:[0,0,1], bodyFwd:[0,0,1], bodyUp:[0,1,0], headFwd:[0.15,-0.15,1], headUp:[0,1,0.15],
+    J:{footL:[-0.20,0.17,0.20],footR:[0.24,0.17,0.24],kneeL:[-0.27,0.55,0.44],kneeR:[0.30,0.58,0.48],
+       hipL:[-0.17,0.60,-0.02],hipR:[0.17,0.60,-0.02],pelvis:[0,0.60,0],chest:[0,1.14,0.06],neck:[0,1.24,0.06],head:[0.02,1.48,0.10],
+       shoulderL:[-0.30,1.14,0.04],shoulderR:[0.30,1.14,0.04],elbowL:[-0.33,0.82,0.08],elbowR:[0.30,0.80,0.30],
+       handL:[-0.30,0.50,0.14],handR:[0.03,0.66,0.44]}},
+  sit_fists:{ centerY:0.82, footFwd:[0,0,1], bodyFwd:[0,0,1], bodyUp:[0,1,0], headFwd:[0,-0.25,1], headUp:[0,1,0.25],
+    J:{footL:[-0.30,0.10,0.55],footR:[0.30,0.10,0.55],kneeL:[-0.32,0.46,0.32],kneeR:[0.32,0.46,0.32],
+       hipL:[-0.16,0.32,0.06],hipR:[0.16,0.32,0.06],pelvis:[0,0.32,0.04],chest:[0,0.95,0.06],neck:[0,1.05,0.06],head:[0,1.29,0.09],
+       shoulderL:[-0.30,0.95,0.05],shoulderR:[0.30,0.95,0.05],elbowL:[-0.31,0.66,0.20],elbowR:[0.31,0.66,0.20],
+       handL:[-0.14,1.16,0.15],handR:[0.14,1.16,0.15]}},
+  grip_scarf:{ centerY:1.45, footFwd:[0,0,1], bodyFwd:[0,0,1], bodyUp:[0,1,0], headFwd:[0,-0.1,1], headUp:[0,1,0.1],
+    J:{footL:[-0.18,0.17,0.02],footR:[0.18,0.17,0.02],kneeL:[-0.17,0.62,0.06],kneeR:[0.17,0.62,0.06],
+       hipL:[-0.16,1.02,0],hipR:[0.16,1.02,0],pelvis:[0,1.00,0],chest:[0,1.55,0.03],neck:[0,1.66,0.03],head:[0,1.90,0.05],
+       shoulderL:[-0.32,1.55,0.03],shoulderR:[0.32,1.55,0.03],elbowL:[-0.34,1.28,0.14],elbowR:[0.34,1.28,0.14],
+       handL:[-0.11,1.54,0.18],handR:[0.11,1.54,0.18]}},
+  stand_profile:{ centerY:1.45, yaw:-0.7, footFwd:[0,0,1], bodyFwd:[0,0,1], bodyUp:[0,1,0], headFwd:[0,-0.05,1], headUp:[0,1,0],
+    J:{footL:[-0.16,0.17,-0.08],footR:[0.16,0.17,0.10],kneeL:[-0.15,0.62,-0.04],kneeR:[0.16,0.62,0.10],
+       hipL:[-0.15,1.02,0],hipR:[0.15,1.02,0],pelvis:[0,1.00,0],chest:[0,1.55,0.03],neck:[0,1.66,0.03],head:[0,1.90,0.06],
+       shoulderL:[-0.32,1.55,0.03],shoulderR:[0.32,1.55,0.03],elbowL:[-0.35,1.22,0.06],elbowR:[0.33,1.20,0.10],
+       handL:[-0.33,0.92,0.10],handR:[0.30,0.90,0.16]}},
+  prone_aim:{ centerY:0.5, footFwd:[0,0,-1], bodyFwd:[0,-0.15,1], bodyUp:[0,1,0.15], headFwd:[0,0.05,1], headUp:[0,1,0], rifle:true, rifleFwd:[0,0,1],
+    J:{footL:[-0.17,0.12,-1.65],footR:[0.17,0.12,-1.65],kneeL:[-0.18,0.18,-1.05],kneeR:[0.18,0.18,-1.05],
+       hipL:[-0.16,0.26,-0.55],hipR:[0.16,0.26,-0.55],pelvis:[0,0.27,-0.55],chest:[0,0.34,0.12],neck:[0,0.38,0.28],head:[0,0.46,0.48],
+       shoulderL:[-0.28,0.38,0.16],shoulderR:[0.28,0.38,0.16],elbowL:[-0.28,0.16,0.48],elbowR:[0.26,0.16,0.52],
+       handL:[-0.06,0.22,0.74],handR:[0.06,0.22,0.80]}},
+};
+const POSE_LIST=['crouch_fists','crouch_rest','sit_fists','grip_scarf','stand_profile','prone_aim'];
+
+function buildHero(g,O,poseName){
+  O=O||[0,0,0];
+  const src=POSES[poseName]||POSES.crouch_fists;
+  const J={}; const yaw=src.yaw||0, cy=Math.cos(yaw), sy=Math.sin(yaw);
+  for(const k in src.J){const p=src.J[k];
+    const x=p[0]*cy+p[2]*sy, z=-p[0]*sy+p[2]*cy;      // yaw about vertical
+    J[k]=[O[0]+x,O[1]+p[1],O[2]+z];}
+  const rot=v=>[v[0]*cy+v[2]*sy,v[1],-v[0]*sy+v[2]*cy];
+  const P={bodyFwd:rot(src.bodyFwd),bodyUp:rot(src.bodyUp),headFwd:rot(src.headFwd),headUp:rot(src.headUp),
+    footFwd:rot(src.footFwd),rifle:src.rifle,rifleFwd:src.rifleFwd?rot(src.rifleFwd):[0,0,1]};
+  assemble(g,J,P);
+  return {centerY:src.centerY};
 }
 
 // ------------------------------------------------------- shared material GLSL
@@ -180,4 +233,5 @@ void material(float m,vec3 p,out vec3 alb,out vec3 emi){
 }`;
 
 window.Geo=Geo; window.MATID=MATID; window.buildHero=buildHero; window.MAT_GLSL=MAT_GLSL;
+window.POSES=POSES; window.POSE_LIST=POSE_LIST;
 })();

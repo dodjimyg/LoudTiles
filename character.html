@@ -24,6 +24,7 @@
 <body>
 <canvas id="c"></canvas>
 <div id="ui">
+  <button id="pose">Pose ▸</button>
   <button id="rot" class="on">↻ Rotation</button>
   <button id="wire">Fil de fer</button>
   <button id="therm">Thermique</button>
@@ -59,16 +60,21 @@ const persp=(f,as,n,fr)=>{const t=1/Math.tan(f/2);return[t/as,0,0,0,0,t,0,0,0,0,
 const lookAt=(e,c,u)=>{const z=norm(sub(e,c)),x=norm(cross(u,z)),y=cross(z,x);
   return[x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-dot(x,e),-dot(y,e),-dot(z,e),1];};
 
-// ---- build the hero model ----
-const g=Geo(); buildHero(g,[0,0,0]);
-const VC=g.pos.length/3;
-const bPos=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,bPos);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(g.pos),gl.STATIC_DRAW);
-const bNrm=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,bNrm);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(g.nrm),gl.STATIC_DRAW);
-const bMat=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,bMat);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(g.mat),gl.STATIC_DRAW);
-// barycentric for wireframe
-const bary=new Float32Array(VC*3);
-for(let i=0;i<VC;i+=3){bary.set([1,0,0, 0,1,0, 0,0,1],i*3);}
-const bBary=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,bBary);gl.bufferData(gl.ARRAY_BUFFER,bary,gl.STATIC_DRAW);
+// ---- build the hero model (rebuildable per pose) ----
+const bPos=gl.createBuffer(),bNrm=gl.createBuffer(),bMat=gl.createBuffer(),bBary=gl.createBuffer();
+let VC=0, g=null, poseIdx=0;
+function buildModel(poseName){
+  g=Geo(); const meta=buildHero(g,[0,0,0],poseName); VC=g.pos.length/3;
+  gl.bindBuffer(gl.ARRAY_BUFFER,bPos);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(g.pos),gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER,bNrm);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(g.nrm),gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER,bMat);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(g.mat),gl.STATIC_DRAW);
+  const bary=new Float32Array(VC*3);
+  for(let i=0;i<VC;i+=3){bary.set([1,0,0, 0,1,0, 0,0,1],i*3);}
+  gl.bindBuffer(gl.ARRAY_BUFFER,bBary);gl.bufferData(gl.ARRAY_BUFFER,bary,gl.STATIC_DRAW);
+  target[1]=meta.centerY;
+  radius = poseName==='prone_aim'?3.4 : (meta.centerY>1.2?4.2:3.2);
+  document.getElementById('status').textContent='pose: '+poseName.replace('_',' ')+'  ·  '+(VC/3)+' triangles';
+}
 
 // ---- shaded program ----
 const shaded=prog(`
@@ -169,7 +175,10 @@ cv.addEventListener('wheel',e=>{radius*=(1+Math.sign(e.deltaY)*0.08);radius=Math
 document.getElementById('rot').onclick=e=>{autoRot=!autoRot;e.target.classList.toggle('on',autoRot);};
 document.getElementById('wire').onclick=e=>{wireOn=!wireOn;e.target.classList.toggle('on',wireOn);};
 document.getElementById('therm').onclick=e=>{thermOn=!thermOn;e.target.classList.toggle('on',thermOn);};
-document.getElementById('reset').onclick=()=>{theta=0.35;phi=1.48;radius=3.2;};
+document.getElementById('reset').onclick=()=>{theta=0.35;phi=1.48;};
+document.getElementById('pose').onclick=()=>{poseIdx=(poseIdx+1)%POSE_LIST.length;buildModel(POSE_LIST[poseIdx]);};
+// initial model (now that target/radius exist)
+buildModel(POSE_LIST[poseIdx]);
 
 // ---- render ----
 const SKY=[0.5,0.5,0.55];
@@ -237,7 +246,7 @@ document.getElementById('obj').onclick=()=>{
      vn+='vn '+N[o].toFixed(3)+' '+N[o+1].toFixed(3)+' '+N[o+2].toFixed(3)+'\n';}
    f+='f '+idx+'//'+idx+' '+(idx+1)+'//'+(idx+1)+' '+(idx+2)+'//'+(idx+2)+'\n'; idx+=3;
  }
- dl('loudtiles_hero.obj', v+vn+f);
+ dl('loudtiles_hero_'+POSE_LIST[poseIdx]+'.obj', v+vn+f);
  let mtl='# LOUDTILES hero materials\n';
  for(const k in MTLNAME){const c=MTLCOL[k];
    mtl+='newmtl '+MTLNAME[k]+'\nKd '+c[0].toFixed(3)+' '+c[1].toFixed(3)+' '+c[2].toFixed(3)+'\nKa 0.05 0.05 0.05\nKs 0.1 0.1 0.1\nNs 20\n\n';}

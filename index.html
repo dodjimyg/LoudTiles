@@ -149,14 +149,22 @@ for(let i=0;i<14;i++){
       Math.random()<0.5?BURN:CONC);
 }
 
-//////////////////// HERO (detailed model from hero.js) ////////////////////
-buildHero(g,[0,0,0.1]);
+// ---- environment buffers (static) ----
+const bPos=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,bPos); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(g.pos),gl.STATIC_DRAW);
+const bNrm=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,bNrm); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(g.nrm),gl.STATIC_DRAW);
+const bMat=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,bMat); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(g.mat),gl.STATIC_DRAW);
+const ECOUNT=g.pos.length/3;
 
-const posArr=new Float32Array(g.pos), nrmArr=new Float32Array(g.nrm), matArr=new Float32Array(g.mat);
-const VCOUNT=g.pos.length/3;
-const bPos=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,bPos); gl.bufferData(gl.ARRAY_BUFFER,posArr,gl.STATIC_DRAW);
-const bNrm=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,bNrm); gl.bufferData(gl.ARRAY_BUFFER,nrmArr,gl.STATIC_DRAW);
-const bMat=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,bMat); gl.bufferData(gl.ARRAY_BUFFER,matArr,gl.STATIC_DRAW);
+//////////////////// HERO (pose-able model from hero.js) ////////////////////
+const hPos=gl.createBuffer(), hNrm=gl.createBuffer(), hMat=gl.createBuffer();
+let HCOUNT=0, heroCenterY=1.0;
+function setHeroPose(name){
+  const hg=Geo(); const meta=buildHero(hg,[0,0,0.1],name); HCOUNT=hg.pos.length/3; heroCenterY=meta.centerY;
+  gl.bindBuffer(gl.ARRAY_BUFFER,hPos); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(hg.pos),gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER,hNrm); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(hg.nrm),gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER,hMat); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(hg.mat),gl.STATIC_DRAW);
+}
+setHeroPose('crouch_fists');
 
 //////////////////// shared GLSL ////////////////////
 const NOISE=`
@@ -318,24 +326,30 @@ const SUN=norm([0.14,0.34,-1.0]);
 const SKYC=[0.86,0.83,0.78];
 const target=[0,1.0,0.12];
 function hn(t,s){return Math.sin(t*s)*0.5+Math.sin(t*s*2.3+1.7)*0.25;} // handheld
+// each shot: a framing + the pose the hero strikes for it
 const SHOTS=[
-  (t)=>({eye:[0.15,0.5,4.3-t*0.16],fov:1.05}),                 // low front push-in
-  (t)=>({eye:[-2.4+t*0.1,1.5,3.3],fov:1.0}),                   // 3/4 left (car)
-  (t)=>({eye:[2.7,1.7-t*0.03,3.0],fov:1.05}),                  // 3/4 right (sign)
-  (t)=>({eye:[0.0,2.7,3.7-t*0.1],fov:1.1}),                    // high angle
-  (t)=>({eye:[-0.5,0.4,2.5-t*0.05],fov:0.95}),                 // close low (thermal)
-  (t)=>({eye:[3.2,0.7,3.6],fov:1.0}),                          // wide low right
+  {pose:'crouch_fists', fov:1.05, eye:(t)=>[0.15,0.5,4.3-t*0.16]},   // low front push-in
+  {pose:'crouch_rest',  fov:1.0,  eye:(t)=>[-2.4+t*0.1,1.4,3.4]},    // 3/4 left (car)
+  {pose:'grip_scarf',   fov:1.05, eye:(t)=>[2.6,1.6-t*0.03,3.6]},    // 3/4 right standing (sign)
+  {pose:'sit_fists',    fov:1.05, eye:(t)=>[0.0,1.4,3.3-t*0.1]},     // front, sitting
+  {pose:'prone_aim',    fov:0.95, eye:(t)=>[-1.6,0.55,2.4-t*0.05]},  // low, prone aim (thermal)
+  {pose:'stand_profile',fov:1.0,  eye:(t)=>[3.0,1.5,3.4]},           // wide, standing profile
 ];
 const SHOTLEN=5.0;
+let lastShot=-1;
 function camera(time){
   const idx=Math.floor(time/SHOTLEN)%SHOTS.length;
+  if(idx!==lastShot){ setHeroPose(SHOTS[idx].pose); lastShot=idx; }
   const lt=time%SHOTLEN;
-  const base=SHOTS[idx](lt);
-  const e=base.eye.slice();
+  const shot=SHOTS[idx];
+  const e=shot.eye(lt).slice();
+  // scale framing to the pose height (crouch≈1.0 reference)
+  const dy=(heroCenterY-1.0);
+  e[1]+=dy*0.9;
   e[0]+=hn(time,1.3)*0.06+mouseX*0.8; e[1]+=hn(time+3,1.1)*0.04-mouseY*0.4; e[2]+=hn(time+6,0.9)*0.05;
-  const c=[target[0]+hn(time,0.7)*0.05,target[1]+hn(time+2,0.8)*0.04,target[2]];
+  const c=[target[0]+hn(time,0.7)*0.05, heroCenterY+hn(time+2,0.8)*0.04, target[2]];
   const thermal = (idx===4)?1:manualThermal;
-  return {eye:e,center:c,fov:base.fov,idx,thermal};
+  return {eye:e,center:c,fov:shot.fov,idx,thermal};
 }
 let mouseX=0,mouseY=0;
 window.addEventListener('mousemove',e=>{mouseX=(e.clientX/window.innerWidth-0.5);mouseY=(e.clientY/window.innerHeight-0.5);});
@@ -370,10 +384,16 @@ function drawScene(time,cam,VP){
   gl.uniformMatrix4fv(sL.uVP,false,VP);
   gl.uniform3fv(sL.uCam,cam.eye); gl.uniform3fv(sL.uSun,SUN); gl.uniform3fv(sL.uSky,SKYC);
   gl.uniform1f(sL.uTime,time);
+  // environment
   gl.bindBuffer(gl.ARRAY_BUFFER,bPos); gl.enableVertexAttribArray(sL.aPos); gl.vertexAttribPointer(sL.aPos,3,gl.FLOAT,false,0,0);
   gl.bindBuffer(gl.ARRAY_BUFFER,bNrm); gl.enableVertexAttribArray(sL.aNrm); gl.vertexAttribPointer(sL.aNrm,3,gl.FLOAT,false,0,0);
   gl.bindBuffer(gl.ARRAY_BUFFER,bMat); gl.enableVertexAttribArray(sL.aMat); gl.vertexAttribPointer(sL.aMat,1,gl.FLOAT,false,0,0);
-  gl.drawArrays(gl.TRIANGLES,0,VCOUNT);
+  gl.drawArrays(gl.TRIANGLES,0,ECOUNT);
+  // hero (current pose)
+  gl.bindBuffer(gl.ARRAY_BUFFER,hPos); gl.vertexAttribPointer(sL.aPos,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER,hNrm); gl.vertexAttribPointer(sL.aNrm,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER,hMat); gl.vertexAttribPointer(sL.aMat,1,gl.FLOAT,false,0,0);
+  gl.drawArrays(gl.TRIANGLES,0,HCOUNT);
 
   // billboards
   const camDir=norm(sub(cam.center,cam.eye));

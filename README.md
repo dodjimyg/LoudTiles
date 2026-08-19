@@ -14,16 +14,25 @@ réseau. Ouvre les fichiers dans un navigateur.
 
 - **`index.html`** — le film temps réel (rue de motel + héros + HUD).
 - **`character.html`** — le **visualiseur 3D du personnage principal** :
-  orbite à la souris (glisser = tourner, molette = zoom), rotation
-  automatique, mode **fil de fer**, mode **thermique**, **export `.OBJ` +
-  `.MTL`** (pour ouvrir le modèle dans Blender / tout logiciel 3D), et photo.
+  orbite à la souris (glisser = tourner, molette = zoom), **sélecteur de
+  pose** (bouton *Pose ▸*), rotation automatique, mode **fil de fer**, mode
+  **thermique**, **export `.OBJ` + `.MTL`** de la pose courante (pour ouvrir
+  le modèle dans Blender / tout logiciel 3D), et photo.
 - **`hero.js`** — le **modèle 3D du héros** et les primitives partagées
   (source unique utilisée par le film et par le visualiseur), plus le GLSL des
   matériaux. Le personnage y est construit à partir de boîtes et de sphères :
   tête (mâchoire, nez), afro volumineuse, lunettes blanches (monture + verres
   teintés + branches), shemagh, tee camo à manches, gilet plaque avec pouches,
   sac à dos + antenne radio, avant-bras tatoués, pantalon cargo à genouillères,
-  rangers. Pose : accroupi, poings aux joues (la signature des références).
+  rangers. Le personnage est **articulé par pose** : chaque pose est un jeu de
+  positions d'articulations (pieds, genoux, hanches, bassin, torse, épaules,
+  coudes, mains, tête) que l'assembleur transforme en modèle complet.
+
+  **6 poses** (d'après les planches de référence) :
+  `crouch_fists` (accroupi, poings aux joues), `crouch_rest` (accroupi, avant-
+  bras sur le genou), `sit_fists` (assis, poings aux joues), `grip_scarf`
+  (debout, mains sur l'écharpe), `stand_profile` (debout de profil), et
+  `prone_aim` (allongé en visée, avec fusil).
 
 > Le personnage est une **silhouette stylisée low-poly** construite à partir de
 > primitives (boîtes + sphères), pas la reproduction photographique d'une
@@ -48,9 +57,10 @@ réseau. Ouvre les fichiers dans un navigateur.
 - **HUD** : `/aggr0 drlft`, `UAV inbound`, minimap satellite, killfeed
   (`BABYINVASION` → User420 / KornDog / HarmonyKorine), timer `4:20`, score
   `68 / 19 WINNING`, arme `M4A1 30/90`, compas, grenades.
-- **Réalisation** : caméra cinématique avec 6 cadrages (plan large, 3/4,
-  contre-plongée, plongée, gros plan…) qui s'enchaînent en coupes franches,
-  avec léger mouvement « caméra à l'épaule » et zoom lent.
+- **Réalisation** : caméra cinématique avec 6 cadrages qui s'enchaînent en
+  coupes franches (léger mouvement « caméra à l'épaule » + zoom lent), et le
+  **héros change de pose à chaque plan** (accroupi, assis, debout, allongé en
+  visée…) — le cadrage s'adapte automatiquement à la taille de la pose.
 
 ## Utilisation
 
