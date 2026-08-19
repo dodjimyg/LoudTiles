@@ -68,7 +68,8 @@ function Geo(){
 
 // material ids (shared with the shaders below)
 const MATID={AS:0,SKIN:1,CAMO:2,GEAR:3,HAIR:4,GLASS:5,NEON:6,CONC:7,LEAF:8,BURN:9,
-             SCARF:10,TRUNK:11,SOLE:12,LENS:13,METAL:14,PATCH:15,EYE:16};
+             SCARF:10,TRUNK:11,SOLE:12,LENS:13,METAL:14,PATCH:15,EYE:16,
+             NEONP:17,NEONC:18,STEEL:19};
 
 // ------------------------------------------------------------------ HERO ----
 // Joint-driven, pose-able character. A pose = named joint positions + a few
@@ -242,6 +243,17 @@ const POSES={
        hipL:[-0.15,1.0,0.04],hipR:[0.15,1.0,-0.04],pelvis:[0,1.0,0],chest:[0,1.55,0.02],neck:[0,1.66,0.02],head:[0,1.90,0.04],
        shoulderL:[-0.32,1.55,0.02],shoulderR:[0.32,1.55,0.02],elbowL:[-0.33,1.3,-0.06],elbowR:[0.33,1.3,0.14],
        handL:[-0.30,1.06,-0.14],handR:[0.30,1.06,0.20]}},
+  // seated at the wheel (driving)
+  drive:{ centerY:1.15, footFwd:[0,0,1], bodyFwd:[0,0.05,1], bodyUp:[0,1,-0.05], headFwd:[0,-0.05,1], headUp:[0,1,0],
+    J:{footL:[-0.20,0.05,0.45],footR:[0.20,0.05,0.55],kneeL:[-0.20,0.40,0.35],kneeR:[0.20,0.42,0.42],
+       hipL:[-0.16,0.42,0.0],hipR:[0.16,0.42,0.0],pelvis:[0,0.44,0],chest:[0,1.02,0.03],neck:[0,1.12,0.04],head:[0,1.36,0.06],
+       shoulderL:[-0.30,1.02,0.03],shoulderR:[0.30,1.02,0.03],elbowL:[-0.30,0.80,0.24],elbowR:[0.30,0.80,0.24],
+       handL:[-0.15,0.92,0.52],handR:[0.15,0.92,0.52]}},
+  drive_look:{ centerY:1.15, footFwd:[0,0,1], bodyFwd:[0,0.05,1], bodyUp:[0,1,-0.05], headFwd:[0.9,-0.05,0.35], headUp:[0,1,0],
+    J:{footL:[-0.20,0.05,0.45],footR:[0.20,0.05,0.55],kneeL:[-0.20,0.40,0.35],kneeR:[0.20,0.42,0.42],
+       hipL:[-0.16,0.42,0.0],hipR:[0.16,0.42,0.0],pelvis:[0,0.44,0],chest:[0,1.02,0.03],neck:[0,1.12,0.04],head:[0,1.36,0.06],
+       shoulderL:[-0.30,1.02,0.03],shoulderR:[0.30,1.02,0.03],elbowL:[-0.30,0.80,0.24],elbowR:[0.30,0.80,0.24],
+       handL:[-0.15,0.92,0.52],handR:[0.15,0.92,0.52]}},
 };
 const POSE_LIST=['crouch_fists','crouch_rest','sit_fists','grip_scarf','stand_profile','prone_aim'];
 
@@ -257,7 +269,13 @@ const SOLDIER_POSES={
        hipL:[-0.15,1.0,0.02],hipR:[0.15,1.0,-0.02],pelvis:[0,1.0,0],chest:[0,1.52,0.03],neck:[0,1.63,0.03],head:[0,1.86,0.05],
        shoulderL:[-0.32,1.52,0.03],shoulderR:[0.32,1.52,0.03],elbowL:[-0.24,1.36,0.22],elbowR:[0.30,1.30,0.12],
        handL:[-0.06,1.34,0.40],handR:[0.10,1.30,0.26]}},
+  fight:{ centerY:1.4, headgear:'helmet', eyes:'goggles_up', footFwd:[0,0,1], bodyFwd:[0,0.25,1], bodyUp:[0,1,-0.12], headFwd:[0,0.05,1], headUp:[0,1,0],
+    J:{footL:[-0.22,0.17,-0.15],footR:[0.24,0.17,0.22],kneeL:[-0.22,0.58,-0.10],kneeR:[0.24,0.56,0.16],
+       hipL:[-0.16,0.96,0],hipR:[0.16,0.96,0.05],pelvis:[0,0.96,0],chest:[0,1.42,0.16],neck:[0,1.52,0.19],head:[0,1.72,0.23],
+       shoulderL:[-0.30,1.42,0.16],shoulderR:[0.30,1.42,0.16],elbowL:[-0.34,1.30,0.36],elbowR:[0.34,1.30,0.36],
+       handL:[-0.20,1.40,0.62],handR:[0.20,1.40,0.62]}},
 };
+SOLDIER_POSES.fightB=Object.assign({},SOLDIER_POSES.fight,{yaw:Math.PI}); // faces the other way
 
 function buildFrom(g,O,src){
   O=O||[0,0,0];
@@ -308,7 +326,10 @@ void material(float m,vec3 p,out vec3 alb,out vec3 emi){
  else if(m<13.5){alb=vec3(0.015,0.02,0.03);emi=vec3(0.06,0.07,0.10);} // sunglasses lens
  else if(m<14.5){alb=vec3(0.06,0.06,0.07);}                       // metal
  else if(m<15.5){alb=vec3(0.34,0.31,0.20);}                       // patch
- else{alb=vec3(0.93,0.93,0.90);emi=vec3(0.07,0.07,0.08);}         // eye white
+ else if(m<16.5){alb=vec3(0.93,0.93,0.90);emi=vec3(0.07,0.07,0.08);} // eye white
+ else if(m<17.5){alb=vec3(0.30,0.04,0.20);emi=vec3(1.7,0.22,1.05);}  // neon pink
+ else if(m<18.5){alb=vec3(0.03,0.20,0.24);emi=vec3(0.22,1.45,1.7);}  // neon cyan
+ else{alb=vec3(0.55,0.58,0.65);}                                     // brushed steel
 }`;
 
 window.Geo=Geo; window.MATID=MATID; window.buildHero=buildHero; window.MAT_GLSL=MAT_GLSL;

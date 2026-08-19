@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LOUDTILES — Drive vers le portail</title>
+<style>
+  :root{color-scheme:dark;}
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:"Courier New",ui-monospace,monospace;-webkit-font-smoothing:none;}
+  #stage{position:fixed;inset:0;width:100%;height:100%;display:block;background:#000;}
+  #gl{display:none;}
+  #ui{position:fixed;left:12px;top:12px;z-index:10;display:flex;gap:8px;align-items:center;font-size:12px;color:#ffd6f0;}
+  #ui button{background:#000000aa;border:1px solid #ff8ad633;color:#ffd6f0;padding:6px 10px;font:inherit;letter-spacing:.06em;cursor:pointer;border-radius:2px;text-transform:uppercase;}
+  #ui button:hover{background:#ff8ad622;}
+  #ui button.rec{color:#ff5a4a;border-color:#ff5a4a99;}
+  @keyframes blink{50%{opacity:.25}} .blink{animation:blink 1s steps(2) infinite;}
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<canvas id="gl"></canvas>
+<div id="ui">
+  <button id="replay">↻ Rejouer</button>
+  <button id="rec">● Rec</button>
+  <button id="fs">Plein écran</button>
+  <span id="status"></span>
+</div>
+
+<script src="hero.js"></script>
+<script>
+/* =========================================================================
+   LOUDTILES // Drive vers le portail — court-métrage vaporwave temps réel.
+   POV passager d'une DeLorean traversant une ville néon ; regards vitre /
+   Koffi ; bagarres & boutiques détruites ; Koffi parle ; un portail d'énergie
+   apparaît, la voiture s'arrête, ils sortent et entrent dans le portail.
+   ========================================================================= */
+const glCanvas=document.getElementById('gl');
+const gl=glCanvas.getContext('webgl',{antialias:true,preserveDrawingBuffer:true,alpha:false});
+const stage=document.getElementById('stage'); const ctx=stage.getContext('2d');
+let W,H,DPR;
+function resize(){DPR=Math.min(window.devicePixelRatio||1,1.5);
+  W=glCanvas.width=Math.floor(innerWidth*DPR);H=glCanvas.height=Math.floor(innerHeight*DPR);
+  stage.width=W;stage.height=H;stage.style.width=innerWidth+'px';stage.style.height=innerHeight+'px';
+  gl.viewport(0,0,W,H);buildTargets();}
+addEventListener('resize',resize);
+function sh(t,s){const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);
+  if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(o)+"\n"+s);return o;}
+function prog(v,f){const p=gl.createProgram();gl.attachShader(p,sh(gl.VERTEX_SHADER,v));
+  gl.attachShader(p,sh(gl.FRAGMENT_SHADER,f));gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));return p;}
+
+// vec / mat
+const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],add=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]],
+ cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],
+ dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],len=a=>Math.hypot(a[0],a[1],a[2]),norm=a=>{const l=len(a)||1;return[a[0]/l,a[1]/l,a[2]/l];};
+const mul=(a,b)=>{const o=new Array(16);for(let r=0;r<4;r++)for(let c=0;c<4;c++){let s=0;for(let k=0;k<4;k++)s+=a[k*4+c]*b[r*4+k];o[r*4+c]=s;}return o;};
+const persp=(f,as,n,fr)=>{const t=1/Math.tan(f/2);return[t/as,0,0,0,0,t,0,0,0,0,(fr+n)/(n-fr),-1,0,0,(2*fr*n)/(n-fr),0];};
+const lookAt=(e,c,u)=>{const z=norm(sub(e,c)),x=norm(cross(u,z)),y=cross(z,x);
+  return[x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-dot(x,e),-dot(y,e),-dot(z,e),1];};
+const I4=[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
+const T4=(x,y,z)=>[1,0,0,0,0,1,0,0,0,0,1,0,x,y,z,1];
+const RZ4=a=>{const c=Math.cos(a),s=Math.sin(a);return[c,s,0,0,-s,c,0,0,0,0,1,0,0,0,0,1];};
+const RY4=a=>{const c=Math.cos(a),s=Math.sin(a);return[c,0,-s,0,0,1,0,0,s,0,c,0,0,0,0,1];};
+const modelYaw=(pos,yaw)=>mul(T4(pos[0],pos[1],pos[2]),RY4(yaw||0));
+const SC4=s=>[s,0,0,0,0,s,0,0,0,0,s,0,0,0,0,1];
+const lerp=(a,b,t)=>a+(b-a)*t, sat=t=>t<0?0:t>1?1:t, sstep=t=>{t=sat(t);return t*t*(3-2*t);};
+const lv=(a,b,t)=>[lerp(a[0],b[0],t),lerp(a[1],b[1],t),lerp(a[2],b[2],t)];
+
+const M=MATID;
+function upload(geo){const b={p:gl.createBuffer(),n:gl.createBuffer(),m:gl.createBuffer(),c:geo.pos.length/3};
+  gl.bindBuffer(gl.ARRAY_BUFFER,b.p);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(geo.pos),gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER,b.n);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(geo.nrm),gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER,b.m);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(geo.mat),gl.STATIC_DRAW);
+  return b;}
+
+//////////////////// city segment (neon vaporwave, tiled while driving) ////////
+const SEG=26;
+function neonBuilding(g,x,z,w,d,h,side){
+  g.box(x,h/2,z,w,h,d,M.GEAR);                             // dark tower
+  const nm = side<0?M.NEONP:M.NEONC;
+  const fz = z + (side<0? d/2+0.05 : -d/2-0.05);           // face toward road
+  // vertical neon edges
+  g.box(x-w/2, h/2, fz, 0.12,h,0.06, nm);
+  g.box(x+w/2, h/2, fz, 0.12,h,0.06, nm);
+  g.box(x, h-0.1, fz, w,0.14,0.06, side<0?M.NEONC:M.NEONP); // top band
+  // window rows
+  const rows=Math.max(2,(h/2.2)|0);
+  for(let r=1;r<rows;r++){ const yy=r*(h/rows);
+    g.box(x, yy, fz, w*0.82, 0.10, 0.05, (r%2? M.NEONC:M.NEONP)); }
+}
+function buildCitySeg(g){
+  // buildings both sides
+  const zs=[-2,-8,-14,-20];
+  for(const z of zs){
+    neonBuilding(g,-11-Math.random()*3, z, 3+Math.random()*2, 4, 8+Math.random()*10, -1);
+    neonBuilding(g, 11+Math.random()*3, z, 3+Math.random()*2, 4, 8+Math.random()*10, +1);
+  }
+  // destroyed shops near the road (lower, broken neon)
+  for(const [x,z,s] of [[-6.5,-5,-1],[6.5,-11,1],[-6.2,-17,-1]]){
+    g.box(x,1.3,z,3.5,2.6,2.6,M.GEAR);                        // shop box
+    g.boxT([x+ s*-1.7,2.9,z],[2.2,0.5,0.2],M.NEONP,[Math.cos(0.4),Math.sin(0.4),0,-Math.sin(0.4),Math.cos(0.4),0,0,0,1]); // broken tilted sign
+    g.box(x+s*1.75, 1.2, z, 0.1,2.2,2.4, M.NEONC);            // door frame neon
+    // rubble
+    for(let i=0;i<4;i++) g.box(x+s*(2+Math.random()), 0.15, z+(Math.random()-0.5)*3, 0.4,0.3,0.4, M.CONC);
+  }
+  // neon palms
+  for(const [x,z] of [[-5,-9],[5,-3],[-4.5,-21]]){
+    g.limb([x,0,z],[x,4.5,z],0.12,M.STEEL);
+    for(let k=0;k<7;k++){const a=k/7*6.28; g.limb([x,4.5,z],[x+Math.cos(a)*1.4,4.0-Math.abs(Math.sin(a))*0.5,z+Math.sin(a)*1.4],0.06,M.NEONC);}
+  }
+  // brawls on the sidewalks (people fighting) — visible through the windows
+  buildSoldier(g,[5.4,0,-11],'fight');  buildSoldier(g,[6.4,0,-11.4],'fightB');   // right, by the destroyed shop
+  buildSoldier(g,[-5.4,0,-19],'fightB'); buildSoldier(g,[-6.3,0,-18.6],'fight');   // left
+}
+const cityGeo=Geo(); buildCitySeg(cityGeo); const CITY=upload(cityGeo);
+
+// fixed roadside tableaus placed where the car passes during the window glances:
+// people fighting + destroyed shops on the right (x+), timed to carZ.
+function destroyedShop(g,x,z,s){
+  g.box(x,1.4,z,3.6,2.8,3.0,M.GEAR);                                     // shop shell
+  g.boxT([x-s*1.9,3.1,z],[2.4,0.55,0.2],M.NEONP,[Math.cos(0.5),Math.sin(0.5),0,-Math.sin(0.5),Math.cos(0.5),0,0,0,1]); // broken sign
+  g.box(x-s*1.85,1.1,z,0.12,2.0,2.6,M.NEONC);                           // shattered window frame
+  for(let i=0;i<6;i++) g.box(x-s*(1.5+Math.random()*1.5),0.16,z+(Math.random()-0.5)*3.2,0.4,0.3,0.4,M.CONC);
+}
+function buildFixtures(g){
+  // first glance (~t5.5, carZ≈-88)
+  destroyedShop(g,7,-90,1);
+  buildSoldier(g,[4.6,0,-89],'fight'); buildSoldier(g,[5.5,0,-89.5],'fightB');
+  // second glance (~t12, carZ≈-200): a bigger brawl + wrecked storefronts
+  destroyedShop(g,7,-198,1); destroyedShop(g,7.2,-208,1);
+  buildSoldier(g,[4.5,0,-200],'fight');  buildSoldier(g,[5.4,0,-200.6],'fightB');
+  buildSoldier(g,[4.8,0,-206],'fightB'); buildSoldier(g,[5.7,0,-205.4],'fight');
+}
+const fixGeo=Geo(); buildFixtures(fixGeo); const FIX=upload(fixGeo);
+
+//////////////////// DeLorean-ish car (exterior) ////////////////////
+function buildCar(g){
+  const st=M.STEEL, dk=M.LENS, uc=M.NEONC, tl=M.NEONP;
+  // faces -Z (nose at -Z)
+  g.box(0,0.55,0, 2.0,0.5,4.6, st);              // main body
+  g.boxT([0,0.35,-2.2],[2.0,0.35,1.2],st,[1,0,0,0,Math.cos(0.35),-Math.sin(0.35),0,Math.sin(0.35),Math.cos(0.35)]); // wedge nose
+  g.box(0,1.05,0.2, 1.7,0.55,2.2, st);           // cabin lower
+  g.box(0,1.35,0.2, 1.5,0.15,2.0, st);           // roof
+  // windows (dark glass)
+  g.box(0,1.15,-0.95, 1.55,0.5,0.1, dk);         // windshield
+  g.box(0,1.15,1.35, 1.55,0.5,0.1, dk);          // rear glass
+  g.box(-0.86,1.15,0.2, 0.1,0.5,1.9, dk);        // side glass L
+  g.box(0.86,1.15,0.2, 0.1,0.5,1.9, dk);         // side glass R
+  // gullwing doors (raised)
+  g.boxT([-1.0,1.7,0.2],[0.1,0.5,2.0],st,[Math.cos(0.5),Math.sin(0.5),0,-Math.sin(0.5),Math.cos(0.5),0,0,0,1]);
+  g.boxT([1.0,1.7,0.2],[0.1,0.5,2.0],st,[Math.cos(-0.5),Math.sin(-0.5),0,-Math.sin(-0.5),Math.cos(-0.5),0,0,0,1]);
+  // wheels
+  for(const [x,z] of [[-0.95,-1.4],[0.95,-1.4],[-0.95,1.5],[0.95,1.5]]) g.box(x,0.35,z,0.35,0.7,0.8,dk);
+  // underglow + lights
+  g.box(0,0.18,0, 2.05,0.08,4.4, uc);            // underglow strip
+  g.box(-0.6,0.5,-2.55,0.5,0.18,0.1, uc); g.box(0.6,0.5,-2.55,0.5,0.18,0.1, uc); // headlights
+  g.box(0,0.7,2.35, 1.7,0.16,0.1, tl);           // taillight bar
+}
+const carGeo=Geo(); buildCar(carGeo); const CAR=upload(carGeo);
+
+//////////////////// interior cockpit (POV framing) ////////////////////
+function buildCockpit(g){
+  const dk=M.LENS, st=M.GEAR, uc=M.NEONC;   // dark cabin so Koffi & the city read
+  // dashboard
+  g.boxT([0,0.86,-0.7],[1.8,0.28,0.5],st,[1,0,0,0,Math.cos(-0.3),-Math.sin(-0.3),0,Math.sin(-0.3),Math.cos(-0.3)]);
+  g.box(0,0.95,-0.62, 1.5,0.06,0.1, uc);          // instrument neon strip
+  // steering wheel (driver = left)
+  const wx=-0.42, wy=1.0, wz=-0.55;
+  for(let k=0;k<12;k++){const a=k/12*6.28; g.box(wx+Math.cos(a)*0.22, wy+Math.sin(a)*0.22, wz, 0.09,0.09,0.06, dk);}
+  g.box(wx,wy,wz+0.05,0.08,0.08,0.2,dk);          // column
+  // door tops / window frames
+  g.box(-0.92,1.3,0.1, 0.12,0.5,2.4, st);         // left door top
+  g.box(0.92,1.3,0.1, 0.12,0.5,2.4, st);          // right door top
+  // A-pillars + roof front
+  g.boxT([-0.8,1.25,-0.85],[0.12,0.9,0.12],st,[Math.cos(0.35),Math.sin(0.35),0,-Math.sin(0.35),Math.cos(0.35),0,0,0,1]);
+  g.boxT([0.8,1.25,-0.85],[0.12,0.9,0.12],st,[Math.cos(-0.35),Math.sin(-0.35),0,-Math.sin(-0.35),Math.cos(-0.35),0,0,0,1]);
+  g.box(0,1.62,-0.8, 1.9,0.12,0.35, st);          // roof front edge (windshield top)
+  g.box(0,1.66,0.4, 1.9,0.1,2.0, dk);             // roof
+  // seats
+  g.box(-0.38,0.75,0.5, 0.6,0.9,0.2, dk); g.box(0.38,0.75,0.5, 0.6,0.9,0.2, dk);
+  g.box(-0.38,0.4,0.2, 0.6,0.2,0.7, dk); g.box(0.38,0.4,0.2, 0.6,0.2,0.7, dk);
+  // hood ahead (visible over the dashboard through the windshield) — brushed steel
+  g.boxT([0,0.60,-1.8],[1.9,0.30,1.5],M.STEEL,[1,0,0,0,Math.cos(0.12),-Math.sin(0.12),0,Math.sin(0.12),Math.cos(0.12)]);
+  g.box(0,0.30,-1.7, 1.95,0.08,1.5, uc);          // hood underglow reflection
+  g.box(-0.6,0.55,-2.5, 0.5,0.16,0.12, uc); g.box(0.6,0.55,-2.5, 0.5,0.16,0.12, uc); // headlights
+}
+const cockGeo=Geo(); buildCockpit(cockGeo); const COCK=upload(cockGeo);
+
+//////////////////// Koffi (rebuildable pose) ////////////////////
+let KOF=null, koffiPose='';
+function setKoffi(pose){ if(pose===koffiPose)return; koffiPose=pose;
+  const kg=Geo(); buildHero(kg,[0,0,0],pose); if(KOF){gl.deleteBuffer(KOF.p);gl.deleteBuffer(KOF.n);gl.deleteBuffer(KOF.m);} KOF=upload(kg);}
+setKoffi('drive');
+
+//////////////////// portal rings ////////////////////
+function buildPortal(g){
+  for(let ring=0;ring<3;ring++){ const rad=1.4+ring*0.5; const mat=ring%2?M.NEONP:M.NEONC;
+    const n=28; for(let k=0;k<n;k++){const a=k/n*6.28;
+      g.box(Math.cos(a)*rad, 2.0+Math.sin(a)*rad, 0, 0.16,0.16,0.16, mat);}}
+}
+const portGeo=Geo(); buildPortal(portGeo); const PORT=upload(portGeo);
+
+//////////////////// programs ////////////////////
+const sceneProg=prog(`
+attribute vec3 aPos,aNrm; attribute float aMat;
+uniform mat4 uVP,uModel; varying vec3 vW,vN; varying float vM;
+void main(){ vec4 wp=uModel*vec4(aPos,1.0); vW=wp.xyz; vN=mat3(uModel)*aNrm; vM=aMat; gl_Position=uVP*wp; }`,
+`precision highp float;
+varying vec3 vW,vN; varying float vM;
+uniform vec3 uCam,uSun,uSky,uSkinTint; uniform float uTime;
+`+MAT_GLSL+`
+void main(){
+ vec3 N=normalize(vN),V=normalize(uCam-vW);
+ vec3 alb,emi; material(vM,vW,alb,emi);
+ float ndl=max(dot(N,uSun),0.0);
+ vec3 sun=vec3(1.0,0.6,0.85)*1.7*ndl;
+ vec3 amb=mix(vec3(0.34,0.24,0.50),vec3(0.66,0.44,0.70),N.y*0.5+0.5);   // brighter fill so figures read
+ float rim=pow(1.0-max(dot(N,V),0.0),3.0);
+ vec3 col=alb*(amb*0.8+sun)+emi;
+ col+=vec3(1.0,0.5,0.9)*rim*0.5;
+ float d=length(vW-uCam); float fog=1.0-exp(-d*0.028);
+ col=mix(col,uSky,clamp(fog,0.0,0.75));
+ float bright=clamp(max(max(col.r,col.g),col.b)-0.75,0.0,1.0)+clamp(dot(emi,vec3(0.4)),0.0,1.0);
+ gl_FragColor=vec4(col,clamp(bright,0.0,1.0));
+}`);
+const sL={aPos:gl.getAttribLocation(sceneProg,'aPos'),aNrm:gl.getAttribLocation(sceneProg,'aNrm'),aMat:gl.getAttribLocation(sceneProg,'aMat'),
+ uVP:gl.getUniformLocation(sceneProg,'uVP'),uModel:gl.getUniformLocation(sceneProg,'uModel'),uCam:gl.getUniformLocation(sceneProg,'uCam'),
+ uSun:gl.getUniformLocation(sceneProg,'uSun'),uSky:gl.getUniformLocation(sceneProg,'uSky'),uTime:gl.getUniformLocation(sceneProg,'uTime'),uSkinTint:gl.getUniformLocation(sceneProg,'uSkinTint')};
+
+// road grid
+const roadProg=prog(`attribute vec3 p;uniform mat4 uVP;varying vec3 w;void main(){w=p;gl_Position=uVP*vec4(p,1.0);}`,
+`precision highp float;varying vec3 w;uniform vec3 uCam;
+void main(){
+ vec2 gg=abs(fract(w.xz*0.25)-0.5);
+ float line=1.0-smoothstep(0.0,0.04,min(gg.x,gg.y));
+ float road=step(abs(w.x),4.5);
+ float d=length(w.xz-uCam.xz); float fade=exp(-d*0.020);
+ vec3 neon = mix(vec3(1.4,0.15,0.9), vec3(0.15,1.1,1.4), step(0.0,w.x));
+ vec3 base=mix(vec3(0.04,0.02,0.08), vec3(0.02,0.01,0.05), road);
+ vec3 col=base + neon*line*fade*1.6;
+ gl_FragColor=vec4(col,clamp(line*fade,0.0,1.0));}`);
+const rL={p:gl.getAttribLocation(roadProg,'p'),uVP:gl.getUniformLocation(roadProg,'uVP'),uCam:gl.getUniformLocation(roadProg,'uCam')};
+const roadBuf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,roadBuf);
+gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-200,0,-260, 200,0,-260, 200,0,40, -200,0,-260, 200,0,40, -200,0,40]),gl.STATIC_DRAW);
+
+// sky
+const skyProg=prog(`attribute vec2 p;varying vec2 uv;void main(){uv=p*0.5+0.5;gl_Position=vec4(p,0.999,1.0);}`,
+`precision highp float;varying vec2 uv;uniform vec2 uSunUV;uniform float uAsp;
+void main(){
+ vec3 top=vec3(0.10,0.05,0.30), mid=vec3(0.45,0.12,0.55), hor=vec3(1.0,0.42,0.7);
+ vec3 c=mix(hor,mid,smoothstep(0.0,0.5,uv.y)); c=mix(c,top,smoothstep(0.45,1.0,uv.y));
+ vec2 d=(uv-uSunUV);d.x*=uAsp;
+ float sun=smoothstep(0.16,0.0,length(d));
+ c=mix(c, vec3(1.0,0.8,0.5), sun);
+ // sun bands
+ if(uv.y<uSunUV.y) c*= (0.5+0.5*step(0.02, fract(uv.y*40.0)));
+ c*=0.94+0.06*sin(uv.y*300.0);
+ float br=clamp(max(max(c.r,c.g),c.b)-0.7,0.0,1.0);gl_FragColor=vec4(c,br);}`);
+const skL={p:gl.getAttribLocation(skyProg,'p'),uSunUV:gl.getUniformLocation(skyProg,'uSunUV'),uAsp:gl.getUniformLocation(skyProg,'uAsp')};
+const fsq=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,fsq);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,1,1,-1,-1,1,1,-1,1]),gl.STATIC_DRAW);
+
+// energy billboard (portal core)
+const bbProg=prog(`attribute vec2 c;uniform mat4 uVP;uniform vec3 uPos,uR,uU;uniform float uS;varying vec2 v;
+void main(){v=c;vec3 w=uPos+uR*c.x*uS+uU*c.y*uS;gl_Position=uVP*vec4(w,1.0);}`,
+`precision highp float;varying vec2 v;uniform float uT,uAlpha;
+float hash(vec2 p){return fract(sin(dot(p,vec2(41.1,289.7)))*43758.5);}
+void main(){float r=length(v); if(r>1.0)discard;
+ float ang=atan(v.y,v.x); float sw=0.5+0.5*sin(ang*6.0+uT*4.0 - r*10.0);
+ float core=smoothstep(1.0,0.0,r);
+ vec3 col=mix(vec3(0.2,1.0,1.4), vec3(1.4,0.3,1.1), sw);
+ col=mix(col, vec3(1.2,1.0,1.4), core*core);
+ float a=core*(0.5+0.5*sw)*uAlpha;
+ gl_FragColor=vec4(col*a*1.6, a);}`);
+const bL={c:gl.getAttribLocation(bbProg,'c'),uVP:gl.getUniformLocation(bbProg,'uVP'),uPos:gl.getUniformLocation(bbProg,'uPos'),
+ uR:gl.getUniformLocation(bbProg,'uR'),uU:gl.getUniformLocation(bbProg,'uU'),uS:gl.getUniformLocation(bbProg,'uS'),uT:gl.getUniformLocation(bbProg,'uT'),uAlpha:gl.getUniformLocation(bbProg,'uAlpha')};
+const quad=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,quad);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,1,1,-1,-1,1,1,-1,1]),gl.STATIC_DRAW);
+
+// post (vaporwave)
+const postProg=prog(`attribute vec2 p;varying vec2 uv;void main(){uv=p*0.5+0.5;gl_Position=vec4(p,0.0,1.0);}`,
+`precision highp float;varying vec2 uv;uniform sampler2D uTex;uniform vec2 uRes;uniform float uTime,uFade;
+float h2(vec2 p){return fract(sin(dot(p,vec2(41.13,289.7)))*43758.5);}
+void main(){vec2 d=uv-0.5;float r2=dot(d,d);float ab=(0.0022+0.010*r2);
+ vec3 col;col.r=texture2D(uTex,uv-d*ab).r;col.g=texture2D(uTex,uv).g;col.b=texture2D(uTex,uv+d*ab).b;
+ vec3 bloom=vec3(0.0);float bw=0.0;
+ for(int i=-2;i<=2;i++)for(int j=-2;j<=2;j++){vec2 o=vec2(float(i),float(j))/uRes*3.2;vec4 s=texture2D(uTex,uv+o);bloom+=s.rgb*s.a;bw+=s.a;}
+ if(bw>0.0)col+=bloom/bw*clamp(bw*0.09,0.0,1.0)*0.8;
+ col=col/(col+0.7)*1.5;
+ float l=dot(col,vec3(0.3,0.59,0.11));
+ vec3 s0=vec3(0.14,0.07,0.42), m0=vec3(0.9,0.3,0.8), h0=vec3(1.0,0.8,0.95);
+ vec3 duo = l<0.5?mix(s0,m0,l*2.0):mix(m0,h0,(l-0.5)*2.0);
+ col=mix(col,duo,0.42); col*=vec3(1.06,0.95,1.10);
+ col*=0.9+0.1*sin(uv.y*uRes.y*0.9);
+ col*=1.0-0.04*sin(uv.y*10.0-uTime*3.0);
+ col+=(h2(uv*uRes+fract(uTime)*133.0)-0.5)*0.05;
+ col*=smoothstep(1.1,0.16,r2*1.7);
+ col*=uFade;
+ gl_FragColor=vec4(pow(max(col,0.0),vec3(0.95)),1.0);}`);
+const pL={p:gl.getAttribLocation(postProg,'p'),uTex:gl.getUniformLocation(postProg,'uTex'),uRes:gl.getUniformLocation(postProg,'uRes'),uTime:gl.getUniformLocation(postProg,'uTime'),uFade:gl.getUniformLocation(postProg,'uFade')};
+
+let fbo,tex,depth;
+function buildTargets(){if(tex)gl.deleteTexture(tex);if(fbo)gl.deleteFramebuffer(fbo);if(depth)gl.deleteRenderbuffer(depth);
+ tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,W,H,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+ gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+ gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+ depth=gl.createRenderbuffer();gl.bindRenderbuffer(gl.RENDERBUFFER,depth);gl.renderbufferStorage(gl.RENDERBUFFER,gl.DEPTH_COMPONENT16,W,H);
+ fbo=gl.createFramebuffer();gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
+ gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.RENDERBUFFER,depth);gl.bindFramebuffer(gl.FRAMEBUFFER,null);}
+
+const SUN=norm([0.0,0.22,-1.0]), SKYC=[0.55,0.28,0.6];
+
+//////////////////// SCENARIO ////////////////////
+const V0=16, T_DECEL=17.5, DECEL_DUR=4.0, DUR=34;
+function scrollDist(t){ let s=0, dt=0.08; for(let x=0;x<t;x+=dt){ let v=V0; if(x>T_DECEL) v=V0*(1.0-sstep((x-T_DECEL)/DECEL_DUR)); s+=v*dt; } return s; }
+const STOP_DIST=scrollDist(T_DECEL+DECEL_DUR+1);
+const carZ=t=>-scrollDist(t);
+const PORTAL_Z=-STOP_DIST-8.5;
+const SEAT=[0.36,1.02,0.4];               // passenger seat offset within car space
+
+// where the POV head looks: forward / right window / left at Koffi
+function headTarget(t){
+  // sequence of glances
+  if(t<4) return 'fwd';
+  if(t<7) return 'right';
+  if(t<10) return 'koffi';
+  if(t<15) return 'right';
+  if(t<18) return 'koffi';
+  if(t<26) return 'fwd';
+  return 'fwd';
+}
+function koffiState(t){
+  // driver seat, rides with the car (x negative). Looks at passenger during 15-18.
+  const cz=carZ(t);
+  if(t<24){ const look=(headTarget(t)==='koffi')?'drive_look':'drive';
+    return {pose:look, pos:[-0.36, 0, cz+0.4], yaw:0, vis:true}; }
+  // gets out and walks into the portal
+  const k=sstep((t-24.5)/6.0);
+  const z=lerp(cz-2.2, PORTAL_Z, k);
+  return {pose:'walk', pos:[lerp(-0.9,0.0,sstep((t-24.5)/2)), 0, z], yaw:Math.PI, vis:t<32.5};
+}
+function cameraState(t){
+  const cz=carZ(t);
+  let eye,center;
+  if(t<24){ // inside; camera + gaze shift per glance
+    const look=headTarget(t);
+    let dir;
+    if(look==='koffi'){ eye=[SEAT[0],SEAT[1],cz+SEAT[2]]; dir=[-0.90,0.42,0.02]; }  // up-left at the driver's face
+    else if(look==='right'){ eye=[0.42,1.06,cz+0.35]; dir=[0.95,-0.05,-0.22]; }      // out the side window
+    else { eye=[SEAT[0],SEAT[1],cz+SEAT[2]]; dir=[0.0,-0.02,-1.0]; }                 // forward
+    center=[eye[0]+dir[0], eye[1]+dir[1], eye[2]+dir[2]];
+    eye[1]+=Math.sin(t*8)*0.01;
+  } else if(t<26.5){ // opening door / turning to exit
+    const k=sstep((t-24)/2.5);
+    eye=[lerp(SEAT[0],1.5,k), lerp(SEAT[1],1.5,k), cz+SEAT[2]];
+    center=[eye[0]-0.2, eye[1]-0.2, lerp(cz-1.0, PORTAL_Z, 0.15)];
+  } else { // step out and walk into the portal
+    const k=sstep((t-26.5)/6.0);
+    eye=[lerp(1.5,0.0,k), lerp(1.5,1.5,1.0), lerp(cz+SEAT[2], PORTAL_Z+0.6, k)];
+    eye[1]=1.5+Math.sin(t*7)*0.03;
+    center=[0.0,1.6,PORTAL_Z];
+  }
+  return {eye,center,fov:1.15};
+}
+function portalState(t){
+  const grow=sstep((t-14)/5.0);         // appears & grows 14..19
+  return {vis:t>14, scale:0.2+grow*1.0, alpha:grow};
+}
+// enter-portal white/pink flash (2D overlay), 30.5..34
+function flashAt(t){ if(t<30.5) return 0; return sstep((t-30.5)/2.5); }
+function fadeAt(t){ let f=1.0; if(t<0.8)f*=sstep(t/0.8); if(t>DUR-1.2)f*=sstep((DUR-t)/1.2); return f; }
+
+//////////////////// draw ////////////////////
+function projUV(VP,p){const x=p[0],y=p[1],z=p[2];
+  const cx=VP[0]*x+VP[4]*y+VP[8]*z+VP[12],cy=VP[1]*x+VP[5]*y+VP[9]*z+VP[13],cw=VP[3]*x+VP[7]*y+VP[11]*z+VP[15];
+  return[(cx/cw)*0.5+0.5,(cy/cw)*0.5+0.5,cw];}
+function drawMesh(buf,model,tint){
+  gl.uniform3fv(sL.uSkinTint,tint||[1,1,1]); gl.uniformMatrix4fv(sL.uModel,false,model);
+  gl.bindBuffer(gl.ARRAY_BUFFER,buf.p);gl.enableVertexAttribArray(sL.aPos);gl.vertexAttribPointer(sL.aPos,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER,buf.n);gl.enableVertexAttribArray(sL.aNrm);gl.vertexAttribPointer(sL.aNrm,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER,buf.m);gl.enableVertexAttribArray(sL.aMat);gl.vertexAttribPointer(sL.aMat,1,gl.FLOAT,false,0,0);
+  gl.drawArrays(gl.TRIANGLES,0,buf.c);}
+
+function drawFrame(t){
+  const cam=cameraState(t), kof=koffiState(t), por=portalState(t);
+  setKoffi(kof.pose);
+  const cz=carZ(t);
+  const VP=mul(persp(cam.fov,W/H,0.03,300),lookAt(cam.eye,cam.center,[0,1,0]));
+
+  gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);gl.viewport(0,0,W,H);
+  gl.clearColor(0.5,0.28,0.6,0);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  // sky
+  gl.disable(gl.DEPTH_TEST);gl.depthMask(false);gl.disable(gl.BLEND);
+  gl.useProgram(skyProg);const sunUV=projUV(VP,add(cam.eye,[SUN[0]*120,SUN[1]*120,SUN[2]*120]));
+  gl.uniform2f(skL.uSunUV,sunUV[2]>0?sunUV[0]:0.5,sunUV[2]>0?sunUV[1]:0.62);gl.uniform1f(skL.uAsp,W/H);
+  gl.bindBuffer(gl.ARRAY_BUFFER,fsq);gl.enableVertexAttribArray(skL.p);gl.vertexAttribPointer(skL.p,2,gl.FLOAT,false,0,0);
+  gl.drawArrays(gl.TRIANGLES,0,6);
+  // road grid
+  gl.enable(gl.DEPTH_TEST);gl.depthMask(true);gl.depthFunc(gl.LEQUAL);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE);
+  gl.useProgram(roadProg);gl.uniformMatrix4fv(rL.uVP,false,VP);gl.uniform3fv(rL.uCam,cam.eye);
+  gl.bindBuffer(gl.ARRAY_BUFFER,roadBuf);gl.enableVertexAttribArray(rL.p);gl.vertexAttribPointer(rL.p,3,gl.FLOAT,false,0,0);
+  gl.drawArrays(gl.TRIANGLES,0,6);
+  gl.disable(gl.BLEND);
+  // scene meshes
+  gl.useProgram(sceneProg);gl.uniformMatrix4fv(sL.uVP,false,VP);
+  gl.uniform3fv(sL.uCam,cam.eye);gl.uniform3fv(sL.uSun,SUN);gl.uniform3fv(sL.uSky,SKYC);gl.uniform1f(sL.uTime,t);
+  // city tiles around the car
+  const base=Math.floor(cz/SEG);
+  for(let k=2;k>=-5;k--){ const zoff=(base+k)*SEG; drawMesh(CITY,T4(0,0,zoff)); }
+  drawMesh(FIX,I4);   // fixed brawls + destroyed shops timed to the window glances
+  // car interior (cockpit) while inside; full car exterior once we've stepped out
+  if(t>=26.6) drawMesh(CAR,T4(0,0,cz)); else drawMesh(COCK,T4(0,0,cz));
+  if(kof.vis) drawMesh(KOF, modelYaw(kof.pos, kof.yaw));
+  // portal rings
+  if(por.vis){ const pm=mul(mul(T4(0,0,PORTAL_Z),RZ4(t*0.6)),SC4(por.scale)); drawMesh(PORT,pm); }
+
+  // portal energy core (additive billboard)
+  if(por.vis){
+    const camDir=norm(sub(cam.center,cam.eye)),right=norm(cross(camDir,[0,1,0])),up=cross(right,camDir);
+    gl.useProgram(bbProg);gl.uniformMatrix4fv(bL.uVP,false,VP);gl.uniform3fv(bL.uR,right);gl.uniform3fv(bL.uU,up);
+    gl.uniform1f(bL.uT,t);gl.uniform1f(bL.uAlpha,por.alpha);
+    gl.uniform3f(bL.uPos,0,2.0,PORTAL_Z);gl.uniform1f(bL.uS,1.7*por.scale);
+    gl.bindBuffer(gl.ARRAY_BUFFER,quad);gl.enableVertexAttribArray(bL.c);gl.vertexAttribPointer(bL.c,2,gl.FLOAT,false,0,0);
+    gl.depthMask(false);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE);
+    gl.drawArrays(gl.TRIANGLES,0,6); gl.disable(gl.BLEND);gl.depthMask(true);
+  }
+
+  // post
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,W,H);gl.disable(gl.DEPTH_TEST);
+  gl.useProgram(postProg);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,tex);
+  gl.uniform1i(pL.uTex,0);gl.uniform2f(pL.uRes,W,H);gl.uniform1f(pL.uTime,t);gl.uniform1f(pL.uFade,fadeAt(t));
+  gl.bindBuffer(gl.ARRAY_BUFFER,fsq);gl.enableVertexAttribArray(pL.p);gl.vertexAttribPointer(pL.p,2,gl.FLOAT,false,0,0);
+  gl.drawArrays(gl.TRIANGLES,0,6);
+}
+
+//////////////////// HUD (minimal, no subtitles) ////////////////////
+function drawHUD(t){
+  const w=stage.width,h=stage.height,s=w/1440;
+  ctx.save();ctx.textBaseline="top";
+  // letterbox
+  const bar=h*0.07; ctx.fillStyle="#000";ctx.fillRect(0,0,w,bar);ctx.fillRect(0,h-bar,w,bar);
+  // digital HUD tag + speed
+  ctx.fillStyle="rgba(255,150,230,0.75)";ctx.font=`${Math.round(13*s)}px "Courier New",monospace`;
+  ctx.textAlign="left";ctx.fillText("LOUDTILES // aggr0 drlft",20*s,bar+10*s);
+  const sp = t<T_DECEL?188:(t>22?0:Math.round(188*(1-sstep((t-T_DECEL)/DECEL_DUR))));
+  ctx.textAlign="right";ctx.fillStyle="rgba(120,240,255,0.8)";ctx.font=`${Math.round(22*s)}px "Courier New",monospace`;
+  ctx.fillText(sp+" KM/H", w-24*s, h-bar-34*s);
+  if(t>=14&&t<24){ctx.fillStyle="rgba(255,120,230,0.9)";ctx.font=`${Math.round(14*s)}px "Courier New",monospace`;
+    ctx.fillText((t<22?"⚠ ANOMALIE DÉTECTÉE":"■ PORTAIL"), w-24*s, h-bar-58*s);}
+  // enter-portal flash
+  const fl=flashAt(t);
+  if(fl>0){ const g=ctx.createRadialGradient(w/2,h*0.42,0,w/2,h*0.42,Math.max(w,h)*0.75);
+    g.addColorStop(0,`rgba(255,235,255,${fl})`);g.addColorStop(0.5,`rgba(255,140,240,${fl*0.9})`);g.addColorStop(1,`rgba(120,220,255,${fl*0.4})`);
+    ctx.fillStyle=g;ctx.fillRect(0,0,w,h);}
+  ctx.restore();
+}
+
+//////////////////// loop / capture ////////////////////
+let startT=performance.now()/1000;
+document.getElementById('replay').addEventListener('click',()=>{startT=performance.now()/1000;});
+let CAPTURING=false;
+window.CAPTURE_BEGIN=()=>{CAPTURING=true;};
+window.RENDER_AT=(t)=>{ drawFrame(t); ctx.clearRect(0,0,stage.width,stage.height); ctx.drawImage(glCanvas,0,0,stage.width,stage.height); drawHUD(t); };
+window.DUR=DUR;
+function frame(){
+  if(CAPTURING)return;
+  let t=performance.now()/1000-startT; if(t>DUR){startT=performance.now()/1000;t=0;}
+  drawFrame(t);
+  ctx.clearRect(0,0,stage.width,stage.height);ctx.drawImage(glCanvas,0,0,stage.width,stage.height);drawHUD(t);
+  requestAnimationFrame(frame);
+}
+
+//////////////////// recording ////////////////////
+let recorder=null,chunks=[],recStart=0;const status=document.getElementById('status'),recBtn=document.getElementById('rec');
+function pickMime(){for(const o of['video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm'])if(window.MediaRecorder&&MediaRecorder.isTypeSupported(o))return o;return '';}
+recBtn.addEventListener('click',()=>{
+  if(recorder&&recorder.state!=='inactive'){recorder.stop();return;}
+  const stream=stage.captureStream(30),mime=pickMime();
+  try{recorder=new MediaRecorder(stream,mime?{mimeType:mime,videoBitsPerSecond:12e6}:undefined);}catch(e){status.textContent="Enregistrement non supporté";return;}
+  chunks=[];recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
+  recorder.onstop=()=>{const ext=(recorder.mimeType||mime).includes('mp4')?'mp4':'webm';const blob=new Blob(chunks,{type:recorder.mimeType||mime});
+    const u=URL.createObjectURL(blob);const a=document.createElement('a');a.href=u;a.download='koffi_drive_'+Date.now()+'.'+ext;a.click();setTimeout(()=>URL.revokeObjectURL(u),4000);
+    recBtn.textContent="● Rec";recBtn.classList.remove('rec');status.textContent="Fichier ."+ext+" téléchargé";};
+  recorder.start();recStart=performance.now();recBtn.textContent="■ Stop";recBtn.classList.add('rec');startT=performance.now()/1000;
+  (function tick(){if(recorder&&recorder.state==='recording'){status.innerHTML='<span class="blink">REC</span> '+((performance.now()-recStart)/1000).toFixed(1)+'s';requestAnimationFrame(tick);}})();
+});
+document.getElementById('fs').addEventListener('click',()=>{if(!document.fullscreenElement)document.documentElement.requestFullscreen();else document.exitFullscreen();});
+
+resize();frame();
+</script>
+</body>
+</html>
