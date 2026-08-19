@@ -68,7 +68,7 @@ function Geo(){
 
 // material ids (shared with the shaders below)
 const MATID={AS:0,SKIN:1,CAMO:2,GEAR:3,HAIR:4,GLASS:5,NEON:6,CONC:7,LEAF:8,BURN:9,
-             SCARF:10,TRUNK:11,SOLE:12,LENS:13,METAL:14,PATCH:15};
+             SCARF:10,TRUNK:11,SOLE:12,LENS:13,METAL:14,PATCH:15,EYE:16};
 
 // ------------------------------------------------------------------ HERO ----
 // Joint-driven, pose-able character. A pose = named joint positions + a few
@@ -127,15 +127,35 @@ function assemble(g,J,P){
   sphere(head[0],head[1],head[2],0.17,M.SKIN,7,10);
   boxT(onF(head,hF,[0,-0.09,0.11]),[0.22,0.15,0.22],M.SKIN,hF.R);   // jaw
   boxT(onF(head,hF,[0,-0.03,0.18]),[0.06,0.08,0.07],M.SKIN,hF.R);   // nose
-  // eyewear: white shades (Koffi) or dark goggles (soldier)
-  const eyeMat=(P.eyes==='dark')?M.LENS:M.GLASS;
-  boxT(onF(head,hF,[0,0.045,0.175]),[0.37,0.05,0.05],eyeMat,hF.R);
-  boxT(onF(head,hF,[0,-0.005,0.170]),[0.37,0.022,0.05],eyeMat,hF.R);
-  for(const s of[-1,1]){
-    boxT(onF(head,hF,[s*0.095,0.015,0.195]),[0.155,0.085,0.02],M.LENS,hF.R);
-    limb(onF(head,hF,[s*0.175,0.03,0.16]),onF(head,hF,[s*0.19,0.03,-0.06]),0.013,eyeMat);
+  // ---- face features ----
+  boxT(onF(head,hF,[0,-0.105,0.155]),[0.10,0.028,0.045],M.HAIR,hF.R);          // mouth
+  const covered=(P.eyes==='white'||P.eyes==='dark');
+  if(!covered){
+    for(const s of[-1,1]){
+      boxT(onF(head,hF,[s*0.072,0.035,0.165]),[0.085,0.05,0.03],M.EYE,hF.R);   // eye white
+      boxT(onF(head,hF,[s*0.072,0.03,0.184]),[0.034,0.034,0.02],M.LENS,hF.R);  // pupil
+      boxT(onF(head,hF,[s*0.078,0.088,0.16]),[0.11,0.028,0.045],M.HAIR,hF.R);  // eyebrow
+    }
   }
-  boxT(onF(head,hF,[0,0.02,0.205]),[0.05,0.05,0.02],eyeMat,hF.R);
+  if(P.face==='goatee'){ boxT(onF(head,hF,[0,-0.135,0.11]),[0.14,0.11,0.19],M.HAIR,hF.R);
+    boxT(onF(head,hF,[0,-0.055,0.17]),[0.14,0.045,0.045],M.HAIR,hF.R); }        // goatee + moustache
+  else if(P.face==='beard'){ boxT(onF(head,hF,[0,-0.11,0.09]),[0.26,0.15,0.22],M.HAIR,hF.R);
+    boxT(onF(head,hF,[0,-0.055,0.17]),[0.15,0.045,0.045],M.HAIR,hF.R); }
+  else if(P.face==='stubble'){ boxT(onF(head,hF,[0,-0.14,0.10]),[0.22,0.06,0.20],M.HAIR,hF.R); }
+  // ---- eyewear ----
+  if(covered){
+    const eyeMat=(P.eyes==='dark')?M.LENS:M.GLASS;
+    boxT(onF(head,hF,[0,0.045,0.175]),[0.37,0.05,0.05],eyeMat,hF.R);
+    boxT(onF(head,hF,[0,-0.005,0.170]),[0.37,0.022,0.05],eyeMat,hF.R);
+    for(const s of[-1,1]){
+      boxT(onF(head,hF,[s*0.095,0.015,0.195]),[0.155,0.085,0.02],M.LENS,hF.R);
+      limb(onF(head,hF,[s*0.175,0.03,0.16]),onF(head,hF,[s*0.19,0.03,-0.06]),0.013,eyeMat);
+    }
+    boxT(onF(head,hF,[0,0.02,0.205]),[0.05,0.05,0.02],eyeMat,hF.R);
+  } else if(P.eyes==='goggles_up'){
+    boxT(onF(head,hF,[0,0.155,0.10]),[0.34,0.07,0.11],M.LENS,hF.R);             // goggles up on brim
+    boxT(onF(head,hF,[0,0.155,0.10]),[0.37,0.03,0.12],M.GEAR,hF.R);             // strap
+  }
   if(P.headgear==='helmet'){
     // combat helmet dome + brim + chin strap
     blob(onF(head,hF,[0,0.08,-0.02])[0],onF(head,hF,[0,0.08,-0.02])[1],onF(head,hF,[0,0.08,-0.02])[2],0.20,0.17,0.21,M.GEAR,6,8);
@@ -223,12 +243,12 @@ const POSE_LIST=['crouch_fists','crouch_rest','sit_fists','grip_scarf','stand_pr
 
 // enemy soldiers: helmet + goggles + rifle
 const SOLDIER_POSES={
-  aim:{ centerY:1.45, headgear:'helmet', eyes:'dark', footFwd:[0,0,1], bodyFwd:[0,0,1], bodyUp:[0,1,0], headFwd:[0,-0.05,1], headUp:[0,1,0], gun:'rifle', gunFwd:[0,0,1],
+  aim:{ centerY:1.45, headgear:'helmet', eyes:'goggles_up', footFwd:[0,0,1], bodyFwd:[0,0,1], bodyUp:[0,1,0], headFwd:[0,-0.05,1], headUp:[0,1,0], gun:'rifle', gunFwd:[0,0,1],
     J:{footL:[-0.18,0.17,0.0],footR:[0.18,0.17,0.05],kneeL:[-0.17,0.62,0.04],kneeR:[0.17,0.62,0.05],
        hipL:[-0.16,1.02,0],hipR:[0.16,1.02,0],pelvis:[0,1.00,0],chest:[0,1.52,0.03],neck:[0,1.63,0.03],head:[0,1.86,0.05],
        shoulderL:[-0.32,1.52,0.03],shoulderR:[0.32,1.52,0.03],elbowL:[-0.22,1.40,0.28],elbowR:[0.30,1.34,0.16],
        handL:[-0.04,1.44,0.46],handR:[0.10,1.40,0.30]}},
-  advance:{ centerY:1.45, headgear:'helmet', eyes:'dark', footFwd:[0,0,1], bodyFwd:[0,0,1], bodyUp:[0,1,0], headFwd:[0,-0.05,1], headUp:[0,1,0], gun:'rifle', gunFwd:[0,0,1],
+  advance:{ centerY:1.45, headgear:'helmet', eyes:'goggles_up', footFwd:[0,0,1], bodyFwd:[0,0,1], bodyUp:[0,1,0], headFwd:[0,-0.05,1], headUp:[0,1,0], gun:'rifle', gunFwd:[0,0,1],
     J:{footL:[-0.16,0.20,0.28],footR:[0.16,0.14,-0.28],kneeL:[-0.16,0.64,0.16],kneeR:[0.16,0.56,-0.14],
        hipL:[-0.15,1.0,0.02],hipR:[0.15,1.0,-0.02],pelvis:[0,1.0,0],chest:[0,1.52,0.03],neck:[0,1.63,0.03],head:[0,1.86,0.05],
        shoulderL:[-0.32,1.52,0.03],shoulderR:[0.32,1.52,0.03],elbowL:[-0.24,1.36,0.22],elbowR:[0.30,1.30,0.12],
@@ -242,9 +262,11 @@ function buildFrom(g,O,src){
     const x=p[0]*cy+p[2]*sy, z=-p[0]*sy+p[2]*cy;      // yaw about vertical
     J[k]=[O[0]+x,O[1]+p[1],O[2]+z];}
   const rot=v=>[v[0]*cy+v[2]*sy,v[1],-v[0]*sy+v[2]*cy];
+  const helmet=src.headgear==='helmet';
   const P={bodyFwd:rot(src.bodyFwd),bodyUp:rot(src.bodyUp),headFwd:rot(src.headFwd),headUp:rot(src.headUp),
     footFwd:rot(src.footFwd),gun:src.gun,gunFwd:src.gunFwd?rot(src.gunFwd):[0,0,1],
-    headgear:src.headgear||'afro',eyes:src.eyes||'white'};
+    headgear:src.headgear||'afro',eyes:src.eyes||(helmet?'goggles_up':'white'),
+    face:src.face||(helmet?'stubble':'goatee')};
   assemble(g,J,P);
   return {centerY:src.centerY};
 }
@@ -267,7 +289,7 @@ vec3 skinCol(vec3 p){vec3 s=vec3(0.70,0.50,0.39);
 void material(float m,vec3 p,out vec3 alb,out vec3 emi){
  emi=vec3(0.0);
  if(m<0.5){float pud=smoothstep(0.5,0.78,noise3(p*0.7));alb=mix(vec3(0.055,0.055,0.062),vec3(0.02,0.02,0.028),pud);emi=uSky*pud*0.30;}
- else if(m<1.5){alb=skinCol(p);}
+ else if(m<1.5){alb=skinCol(p)*uSkinTint;}
  else if(m<2.5){alb=camoCol(p);}
  else if(m<3.5){alb=vec3(0.035,0.035,0.04);}
  else if(m<4.5){alb=vec3(0.03,0.026,0.022);}
@@ -281,7 +303,8 @@ void material(float m,vec3 p,out vec3 alb,out vec3 emi){
  else if(m<12.5){alb=vec3(0.02,0.02,0.02);}                       // boot sole
  else if(m<13.5){alb=vec3(0.015,0.02,0.03);emi=vec3(0.06,0.07,0.10);} // sunglasses lens
  else if(m<14.5){alb=vec3(0.06,0.06,0.07);}                       // metal
- else{alb=vec3(0.34,0.31,0.20);}                                  // patch
+ else if(m<15.5){alb=vec3(0.34,0.31,0.20);}                       // patch
+ else{alb=vec3(0.93,0.93,0.90);emi=vec3(0.07,0.07,0.08);}         // eye white
 }`;
 
 window.Geo=Geo; window.MATID=MATID; window.buildHero=buildHero; window.MAT_GLSL=MAT_GLSL;

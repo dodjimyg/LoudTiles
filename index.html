@@ -127,6 +127,7 @@ void main(){vW=aPos; vN=aNrm; vM=aMat; gl_Position=uVP*vec4(aPos,1.0);}`,
 `precision highp float;
 varying vec3 vW; varying vec3 vN; varying float vM;
 uniform vec3 uCam; uniform vec3 uSun; uniform vec3 uSky; uniform float uTime;
+uniform vec3 uSkinTint;
 `+MAT_GLSL+`
 void main(){
  vec3 N=normalize(vN),V=normalize(uCam-vW);
@@ -147,7 +148,7 @@ void main(){
 const sL={aPos:gl.getAttribLocation(sceneProg,'aPos'),aNrm:gl.getAttribLocation(sceneProg,'aNrm'),
  aMat:gl.getAttribLocation(sceneProg,'aMat'),uVP:gl.getUniformLocation(sceneProg,'uVP'),
  uCam:gl.getUniformLocation(sceneProg,'uCam'),uSun:gl.getUniformLocation(sceneProg,'uSun'),
- uSky:gl.getUniformLocation(sceneProg,'uSky'),uTime:gl.getUniformLocation(sceneProg,'uTime')};
+ uSky:gl.getUniformLocation(sceneProg,'uSky'),uTime:gl.getUniformLocation(sceneProg,'uTime'),uSkinTint:gl.getUniformLocation(sceneProg,'uSkinTint')};
 
 //////////////////// sky program ////////////////////
 const skyProg=prog(`attribute vec2 p;varying vec2 uv;void main(){uv=p*0.5+0.5;gl_Position=vec4(p,0.999,1.0);}`,
@@ -322,7 +323,7 @@ function drawScene(time,cam,VP){
   gl.useProgram(sceneProg);
   gl.uniformMatrix4fv(sL.uVP,false,VP);
   gl.uniform3fv(sL.uCam,cam.eye); gl.uniform3fv(sL.uSun,SUN); gl.uniform3fv(sL.uSky,SKYC);
-  gl.uniform1f(sL.uTime,time);
+  gl.uniform1f(sL.uTime,time); gl.uniform3f(sL.uSkinTint,1,1,1);
   // environment
   gl.bindBuffer(gl.ARRAY_BUFFER,bPos); gl.enableVertexAttribArray(sL.aPos); gl.vertexAttribPointer(sL.aPos,3,gl.FLOAT,false,0,0);
   gl.bindBuffer(gl.ARRAY_BUFFER,bNrm); gl.enableVertexAttribArray(sL.aNrm); gl.vertexAttribPointer(sL.aNrm,3,gl.FLOAT,false,0,0);

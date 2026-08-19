@@ -83,7 +83,7 @@ uniform mat4 uVP; varying vec3 vW,vN; varying float vM;
 void main(){vW=aPos;vN=aNrm;vM=aMat;gl_Position=uVP*vec4(aPos,1.0);}`,
 `precision highp float;
 varying vec3 vW,vN; varying float vM;
-uniform vec3 uCam,uSky; uniform float uTime;
+uniform vec3 uCam,uSky,uSkinTint; uniform float uTime;
 `+MAT_GLSL+`
 void main(){
  vec3 N=normalize(vN),V=normalize(uCam-vW);
@@ -203,6 +203,7 @@ function draw(){
  // model
  gl.useProgram(shaded);gl.uniformMatrix4fv(shL.uVP,false,VP);
  gl.uniform3fv(shL.uCam,eye);gl.uniform3fv(shL.uSky,SKY);gl.uniform1f(shL.uTime,time);
+ gl.uniform3f(gl.getUniformLocation(shaded,'uSkinTint'),1,1,1);
  gl.bindBuffer(gl.ARRAY_BUFFER,bPos);gl.enableVertexAttribArray(shL.aPos);gl.vertexAttribPointer(shL.aPos,3,gl.FLOAT,false,0,0);
  gl.bindBuffer(gl.ARRAY_BUFFER,bNrm);gl.enableVertexAttribArray(shL.aNrm);gl.vertexAttribPointer(shL.aNrm,3,gl.FLOAT,false,0,0);
  gl.bindBuffer(gl.ARRAY_BUFFER,bMat);gl.enableVertexAttribArray(shL.aMat);gl.vertexAttribPointer(shL.aMat,1,gl.FLOAT,false,0,0);

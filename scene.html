@@ -111,14 +111,14 @@ uniform mat4 uVP,uModel; varying vec3 vW,vN; varying float vM;
 void main(){ vec4 wp=uModel*vec4(aPos,1.0); vW=wp.xyz; vN=mat3(uModel)*aNrm; vM=aMat; gl_Position=uVP*wp; }`,
 `precision highp float;
 varying vec3 vW,vN; varying float vM;
-uniform vec3 uCam,uSun,uSky; uniform float uTime;
+uniform vec3 uCam,uSun,uSky,uSkinTint; uniform float uTime;
 `+MAT_GLSL+`
 void main(){
  vec3 N=normalize(vN),V=normalize(uCam-vW);
  vec3 alb,emi; material(vM,vW,alb,emi);
  float ndl=max(dot(N,uSun),0.0);
- vec3 sun=vec3(1.0,0.82,0.6)*2.3*ndl;
- vec3 amb=mix(vec3(0.26,0.30,0.40),vec3(0.52,0.55,0.62),N.y*0.5+0.5);
+ vec3 sun=vec3(1.0,0.66,0.86)*2.2*ndl;                                   // pink sun
+ vec3 amb=mix(vec3(0.20,0.16,0.44),vec3(0.72,0.42,0.72),N.y*0.5+0.5);   // blue->pink hemispheric
  float rim=pow(1.0-max(dot(N,V),0.0),3.0), back=max(dot(N,-uSun),0.0);
  vec3 col=alb*(amb*0.72+sun)+emi;
  col+=vec3(1.0,0.8,0.55)*rim*(0.5+back*1.7);
@@ -129,14 +129,19 @@ void main(){
 }`);
 const sL={aPos:gl.getAttribLocation(sceneProg,'aPos'),aNrm:gl.getAttribLocation(sceneProg,'aNrm'),aMat:gl.getAttribLocation(sceneProg,'aMat'),
  uVP:gl.getUniformLocation(sceneProg,'uVP'),uModel:gl.getUniformLocation(sceneProg,'uModel'),
- uCam:gl.getUniformLocation(sceneProg,'uCam'),uSun:gl.getUniformLocation(sceneProg,'uSun'),uSky:gl.getUniformLocation(sceneProg,'uSky'),uTime:gl.getUniformLocation(sceneProg,'uTime')};
+ uCam:gl.getUniformLocation(sceneProg,'uCam'),uSun:gl.getUniformLocation(sceneProg,'uSun'),uSky:gl.getUniformLocation(sceneProg,'uSky'),uTime:gl.getUniformLocation(sceneProg,'uTime'),
+ uSkinTint:gl.getUniformLocation(sceneProg,'uSkinTint')};
 
 //////////////////// sky ////////////////////
 const skyProg=prog(`attribute vec2 p;varying vec2 uv;void main(){uv=p*0.5+0.5;gl_Position=vec4(p,0.999,1.0);}`,
 `precision highp float;varying vec2 uv;uniform vec2 uSunUV;uniform float uAsp;
-void main(){vec3 top=vec3(0.20,0.24,0.34),hor=vec3(0.52,0.50,0.50);
- vec3 c=mix(hor,top,smoothstep(0.15,1.0,uv.y));
- vec2 d=(uv-uSunUV);d.x*=uAsp;c+=vec3(1.0,0.8,0.6)*exp(-dot(d,d)*10.0)*0.5+vec3(1.0,0.85,0.7)*exp(-dot(d,d)*60.0)*0.9;
+void main(){
+ vec3 top=vec3(0.16,0.08,0.34), mid=vec3(0.52,0.16,0.55), hor=vec3(1.0,0.52,0.72); // vaporwave
+ vec3 c=mix(hor,mid,smoothstep(0.0,0.5,uv.y));
+ c=mix(c,top,smoothstep(0.45,1.0,uv.y));
+ vec2 d=(uv-uSunUV);d.x*=uAsp;
+ c+=vec3(1.0,0.65,0.85)*exp(-dot(d,d)*9.0)*0.55 + vec3(1.0,0.9,1.0)*exp(-dot(d,d)*55.0)*1.0;
+ c*=0.93+0.07*sin(uv.y*320.0);                 // digital scanlines in the sky
  float br=clamp(max(max(c.r,c.g),c.b)-0.7,0.0,1.0);gl_FragColor=vec4(c,br);}`);
 const skL={p:gl.getAttribLocation(skyProg,'p'),uSunUV:gl.getUniformLocation(skyProg,'uSunUV'),uAsp:gl.getUniformLocation(skyProg,'uAsp')};
 
@@ -168,15 +173,26 @@ const postProg=prog(`attribute vec2 p;varying vec2 uv;void main(){uv=p*0.5+0.5;g
 vec3 thermal(float t){t=clamp(t,0.0,1.0);vec3 c0=vec3(0.02,0.02,0.06),c1=vec3(0.13,0.02,0.28),c2=vec3(0.55,0.03,0.35),c3=vec3(0.90,0.12,0.05),c4=vec3(1.0,0.45,0.02),c5=vec3(1.0,0.85,0.2),c6=vec3(1.0,1.0,0.98);
  if(t<0.16)return mix(c0,c1,t/0.16);if(t<0.34)return mix(c1,c2,(t-0.16)/0.18);if(t<0.52)return mix(c2,c3,(t-0.34)/0.18);if(t<0.68)return mix(c3,c4,(t-0.52)/0.16);if(t<0.85)return mix(c4,c5,(t-0.68)/0.17);return mix(c5,c6,(t-0.85)/0.15);}
 float h2(vec2 p){return fract(sin(dot(p,vec2(41.13,289.7)))*43758.5);}
-void main(){vec2 d=uv-0.5;float r2=dot(d,d);float ab=(0.0012+0.005*r2);
+void main(){vec2 d=uv-0.5;float r2=dot(d,d);float ab=(0.0022+0.009*r2);   // stronger chroma (digital)
  vec3 col;col.r=texture2D(uTex,uv-d*ab).r;col.g=texture2D(uTex,uv).g;col.b=texture2D(uTex,uv+d*ab).b;
  vec3 bloom=vec3(0.0);float bw=0.0;
  for(int i=-2;i<=2;i++)for(int j=-2;j<=2;j++){vec2 o=vec2(float(i),float(j))/uRes*3.0;vec4 s=texture2D(uTex,uv+o);bloom+=s.rgb*s.a;bw+=s.a;}
- if(bw>0.0)col+=bloom/bw*clamp(bw*0.08,0.0,1.0)*0.6;
+ if(bw>0.0)col+=bloom/bw*clamp(bw*0.08,0.0,1.0)*0.7;
  if(uThermal>0.5){float l=dot(col,vec3(0.3,0.59,0.11));col=thermal(pow(l,0.8));}
- else{col=col/(col+0.62)*1.55;col=(col-0.5)*1.13+0.5;col.r*=1.05;}
- col+=(h2(uv*uRes+fract(uTime)*133.0)-0.5)*0.05;
- col*=smoothstep(1.05,0.22,r2*1.7);
+ else{
+   col=col/(col+0.66)*1.5;
+   // vaporwave duotone graded over the image
+   float l=dot(col,vec3(0.3,0.59,0.11));
+   vec3 sh=vec3(0.16,0.09,0.40), mi=vec3(0.86,0.34,0.74), hi=vec3(1.0,0.78,0.94);
+   vec3 duo = l<0.5 ? mix(sh,mi,l*2.0) : mix(mi,hi,(l-0.5)*2.0);
+   col=mix(col,duo,0.5);
+   col*=vec3(1.06,0.95,1.10);
+ }
+ // digital: scanlines + slow rolling bar + grain
+ col*=0.88+0.12*sin(uv.y*uRes.y*0.9);
+ col*=1.0-0.05*sin(uv.y*10.0 - uTime*3.0);
+ col+=(h2(uv*uRes+fract(uTime)*133.0)-0.5)*0.06;
+ col*=smoothstep(1.08,0.18,r2*1.7);
  col*=uFade;
  gl_FragColor=vec4(pow(max(col,0.0),vec3(0.95)),1.0);}`);
 const pL={p:gl.getAttribLocation(postProg,'p'),uTex:gl.getUniformLocation(postProg,'uTex'),uRes:gl.getUniformLocation(postProg,'uRes'),
@@ -192,7 +208,7 @@ function buildTargets(){if(tex)gl.deleteTexture(tex);if(fbo)gl.deleteFramebuffer
  fbo=gl.createFramebuffer();gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
  gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.RENDERBUFFER,depth);gl.bindFramebuffer(gl.FRAMEBUFFER,null);}
 
-const SUN=norm([0.14,0.34,-1.0]), SKYC=[0.55,0.53,0.52];
+const SUN=norm([0.14,0.34,-1.0]), SKYC=[0.72,0.48,0.72];   // pink/blue haze
 
 //////////////////// ambient fire/smoke at wrecked car ////////////////////
 const FIRE=[],SMOKE=[];
@@ -203,8 +219,12 @@ for(let i=0;i<24;i++)SMOKE.push({o:[CARFRONT[0]+(Math.random()-0.5)*1.8,CARFRONT
 // Layout: protagonist (camera) near z=0 looking toward -Z. Soldiers advance
 // from -Z; Koffi appears further -Z, behind them, and fires toward +Z.
 const SOL_X=[-1.7,0.1,1.7];
-const KILL_T=[12.6,15.5,18.5];
-const DUR=41;
+const SOL_NAMES=['Sony','Curtis','James'];
+const SOL_TINT=[[1.12,1.00,0.92],[0.70,0.55,0.50],[0.96,0.78,0.66]]; // pale / dark / warm
+// death order: Sony first, then Curtis, then James — fast succession
+const KILL_T=[10.8,12.3,13.2];
+const FIRST_DEATH=Math.min(KILL_T[0],KILL_T[1],KILL_T[2]);
+const DUR=33.5;
 let killsShown=0; const killfeed=[]; let banner="";
 function resetScenario(){killsShown=0;killfeed.length=0;banner="";muzz.length=0;bloods.length=0;}
 const muzz=[], bloods=[];
@@ -212,59 +232,57 @@ const muzz=[], bloods=[];
 // subtitles [start,end,text]
 const SUBS=[
  [0.2,4,"JE SUIS À TERRE.\nJe n'arrive plus à bouger. Ma vision tremble, ma respiration est courte."],
- [4,8,"Trois soldats avancent vers moi, leurs armes braquées.\n« C'EST FINI. »"],
- [8,10.3,"Je ferme les yeux.\nDes tirs éclatent."],
- [10.3,12.2,"J'ouvre les yeux.\nUn homme vient d'apparaître derrière eux."],
- [12.2,13.6,"KOFFI."],
- [13.6,15.3,"Trois rafales. Le premier soldat tombe."],
- [15.3,18.3,"Il pivote immédiatement. Le deuxième s'écroule."],
- [18.3,21,"Le dernier tente de se retourner.\nUn dernier coup de feu. Silence."],
- [21,25,"Je reste au sol, incapable de comprendre\nce qui vient de se passer."],
- [25,30,"Koffi range son arme et s'approche. Il me tend la main.\n« DEBOUT. ON N'A PAS FINI. »"],
- [30,34,"Je saisis sa main.\nIl me relève."],
- [34,41,"Pour la première fois, je ne suis plus seul.\nJe le suis."],
+ [4,7.6,"Trois soldats avancent vers moi, leurs armes braquées.\n« C'EST FINI. »"],
+ [7.6,9.2,"Je ferme les yeux.\nDes tirs éclatent."],
+ [9.2,10.6,"J'ouvre les yeux. Un homme est apparu derrière eux.\nKOFFI."],
+ [10.6,11.8,"Une détonation. Sony s'écroule.\nLes deux autres se retournent — trop tard."],
+ [11.8,13.9,"Deux tirs. Curtis, puis James.\nSilence."],
+ [13.9,17.5,"Je reste au sol, incapable de comprendre\nce qui vient de se passer."],
+ [17.5,22.5,"Koffi range son arme et s'approche. Il me tend la main.\n« DEBOUT. ON N'A PAS FINI. »"],
+ [22.5,26,"Je saisis sa main.\nIl me relève."],
+ [26,33.5,"Pour la première fois, je ne suis plus seul.\nJe le suis."],
 ];
 function subAt(t){for(const s of SUBS)if(t>=s[0]&&t<s[1])return s;return null;}
 
-// soldier state at time t: {pos,yaw,tilt,visible}
+// soldier state: {pos,yaw,tilt,vis}. Survivors turn to face Koffi on 1st death.
 function soldierState(i,t){
   const x=SOL_X[i];
-  const zAdv=lerp(-8.5,-4.6, sstep((t-1.5)/4));   // advance during beats 1-2
+  const zAdv=lerp(-8.5,-4.6, sstep((t-1.5)/4));
   let z=Math.min(-4.6, zAdv); if(t<1.5)z=-8.5;
-  const yaw=0; // facing +Z (toward protagonist)
-  const kt=KILL_T[i]; let tilt=0, dz=0, dy=0;
-  if(t>=kt){ const k=sat((t-kt)/0.55); tilt=-1.55*sstep(k); dz=-0.4*sstep(k); dy=-0.05*sstep(k); }
-  return {pos:[x,0+dy,z+dz],yaw,tilt,vis:t>1.0};
+  const kt=KILL_T[i]; let yaw=0, tilt=0, dz=0, dy=0;
+  // react: if this soldier is a survivor of the first death, spin around toward Koffi
+  if(i!==0 && t>=FIRST_DEATH && t<kt){ yaw=Math.PI*sstep((t-FIRST_DEATH)/0.5); }
+  else if(i!==0 && t>=kt){ yaw=Math.PI; }
+  if(t>=kt){ const k=sat((t-kt)/0.5); tilt=-1.6*sstep(k); dz=-0.45*sstep(k); dy=-0.05*sstep(k); }
+  return {pos:[x,dy,z+dz],yaw,tilt,vis:t>1.0};
 }
 // koffi state
 function koffiState(t){
-  if(t<9)   return {pose:'aim_pistol',pos:[0,0,-9],yaw:0,vis:false};
-  if(t<21){ // firing: face each target a touch
+  if(t<8.6)  return {pose:'aim_pistol',pos:[0,0,-9],yaw:0,vis:false};
+  if(t<14){ // firing quickly, snapping to each target
     let yaw=0;
-    if(t>=KILL_T[0]&&t<KILL_T[1]) yaw=Math.atan2(SOL_X[0]-0.1,3.5)*0.7;
-    else if(t>=KILL_T[1]&&t<KILL_T[2]) yaw=Math.atan2(SOL_X[1]-0.1,3.5)*0.7;
-    else if(t>=KILL_T[2]) yaw=Math.atan2(SOL_X[2]-0.1,3.5)*0.7;
+    if(t>=KILL_T[2]) yaw=Math.atan2(SOL_X[2]-0.1,3.5)*0.8;
+    else if(t>=KILL_T[1]) yaw=Math.atan2(SOL_X[1]-0.1,3.5)*0.8;
+    else if(t>=KILL_T[0]-0.2) yaw=Math.atan2(SOL_X[0]-0.1,3.5)*0.8;
     return {pose:'aim_pistol',pos:[0.1,0,-7.6],yaw,vis:true};
   }
-  if(t<25) return {pose:'stand',pos:[0.1,0,-6.5],yaw:0.1,vis:true};        // beat 7
-  if(t<30){ const k=sstep((t-25)/3.2); return {pose:'kneel_reach',pos:[0.1,0,lerp(-6.5,-1.35,k)],yaw:0,vis:true}; } // approach + kneel
-  if(t<34) return {pose:'kneel_reach',pos:[0.1,0,-1.35],yaw:0,vis:true};   // hold, reaching
-  const k=sstep((t-34)/6.5); return {pose:'walk',pos:[0.1,0,lerp(-1.6,-9,k)],yaw:Math.PI,vis:true}; // turn & walk away
+  if(t<17.5) return {pose:'stand',pos:[0.1,0,-6.5],yaw:0.1,vis:true};
+  if(t<22.5){ const k=sstep((t-17.5)/3.2); return {pose:'kneel_reach',pos:[0.1,0,lerp(-6.5,-1.35,k)],yaw:0,vis:true}; }
+  if(t<26) return {pose:'kneel_reach',pos:[0.1,0,-1.35],yaw:0,vis:true};
+  const k=sstep((t-26)/6.5); return {pose:'walk',pos:[0.1,0,lerp(-1.6,-9,k)],yaw:Math.PI,vis:true};
 }
 // camera POV
 function cameraState(t){
   let eye,center,fov=1.02;
   const trem=[Math.sin(t*9)*0.012+Math.sin(t*3.3)*0.02, Math.sin(t*7.1)*0.012, 0];
-  if(t<8){ eye=[0.15,0.42,0.5]; center=[0.0,0.55,-6]; }              // on the ground
-  else if(t<21){ eye=[0.1,0.46,0.35]; center=[0.1,0.7,-6.2]; }       // watching the kills
-  else if(t<25){ eye=[0.1,0.5,0.3]; center=[0.1,0.9,-6.4]; }         // silence
-  else if(t<30){ eye=[0.1,0.5,0.2]; center=lv([0.1,0.9,-6.4],[0.1,1.0,-1.6],sstep((t-25)/4)); } // koffi approaches
-  else if(t<34){ const k=sstep((t-30)/3.8); eye=[0.1,lerp(0.5,1.62,k),lerp(0.2,0.1,k)]; center=[0.1,lerp(1.0,1.5,k),-1.4]; } // lifted up
-  else { const k=sstep((t-34)/6.5); eye=[0.1,1.62,lerp(0.1,-1.2,k)]; center=[0.1,1.5,lerp(-1.4,-9,k)];  // follow Koffi
-         eye[1]+=Math.sin(t*7)*0.02; } // walk bob
+  if(t<8){ eye=[0.15,0.42,0.5]; center=[0.0,0.55,-6]; }
+  else if(t<14){ eye=[0.1,0.46,0.35]; center=[0.1,0.7,-6.2]; }
+  else if(t<17.5){ eye=[0.1,0.5,0.3]; center=[0.1,0.9,-6.4]; }
+  else if(t<22.5){ eye=[0.1,0.5,0.2]; center=lv([0.1,0.9,-6.4],[0.1,1.0,-1.6],sstep((t-17.5)/4)); }
+  else if(t<26){ const k=sstep((t-22.5)/3.4); eye=[0.1,lerp(0.5,1.62,k),lerp(0.2,0.1,k)]; center=[0.1,lerp(1.0,1.5,k),-1.4]; }
+  else { const k=sstep((t-26)/6.5); eye=[0.1,1.62,lerp(0.1,-1.2,k)]; center=[0.1,1.5,lerp(-1.4,-9,k)]; eye[1]+=Math.sin(t*7)*0.02; }
   eye=[eye[0]+trem[0],eye[1]+trem[1],eye[2]];
-  const thermal=manualThermal;
-  return {eye,center,fov,thermal};
+  return {eye,center,fov,thermal:manualThermal};
 }
 // black blink when "eyes closed" (~8.4–9.4) + final fade out
 function fadeAt(t){
@@ -279,7 +297,8 @@ function fadeAt(t){
 function projUV(VP,p){const x=p[0],y=p[1],z=p[2];
   const cx=VP[0]*x+VP[4]*y+VP[8]*z+VP[12],cy=VP[1]*x+VP[5]*y+VP[9]*z+VP[13],cw=VP[3]*x+VP[7]*y+VP[11]*z+VP[15];
   return[(cx/cw)*0.5+0.5,(cy/cw)*0.5+0.5,cw];}
-function drawMesh(buf,model){
+function drawMesh(buf,model,tint){
+  gl.uniform3fv(sL.uSkinTint, tint||[1,1,1]);
   gl.uniformMatrix4fv(sL.uModel,false,model);
   gl.bindBuffer(gl.ARRAY_BUFFER,buf.p);gl.enableVertexAttribArray(sL.aPos);gl.vertexAttribPointer(sL.aPos,3,gl.FLOAT,false,0,0);
   gl.bindBuffer(gl.ARRAY_BUFFER,buf.n);gl.enableVertexAttribArray(sL.aNrm);gl.vertexAttribPointer(sL.aNrm,3,gl.FLOAT,false,0,0);
@@ -297,7 +316,7 @@ function drawFrame(t){
 
   // spawn kill events
   for(let i=0;i<3;i++){ if(t>=KILL_T[i] && killsShown<=i){ killsShown=i+1;
-    killfeed.push({a:'KOFFI',b:'SOLDAT '+(i+1),t});
+    killfeed.push({a:'KOFFI',b:SOL_NAMES[i],t});
     banner="KOFFI — "+(i+1)+(i+1>1?" KILLS":" KILL");
     const ss=soldierState(i,KILL_T[i]+0.01);
     muzz.push({t0:t}); bloods.push({pos:[ss.pos[0],1.2,ss.pos[2]],t0:t}); } }
@@ -316,7 +335,7 @@ function drawFrame(t){
   gl.uniform3fv(sL.uCam,cam.eye);gl.uniform3fv(sL.uSun,SUN);gl.uniform3fv(sL.uSky,SKYC);gl.uniform1f(sL.uTime,t);
   drawMesh(ENV,I4);
   // soldiers
-  for(let i=0;i<3;i++){const s=soldierState(i,t); if(s.vis) drawMesh(SOL,modelMat(s.pos,s.yaw,s.tilt));}
+  for(let i=0;i<3;i++){const s=soldierState(i,t); if(s.vis) drawMesh(SOL,modelMat(s.pos,s.yaw,s.tilt),SOL_TINT[i]);}
   // koffi
   if(kof.vis) drawMesh(KOF,modelMat(kof.pos,kof.yaw,0));
   // POV legs (while on the ground, beats 1-8)
@@ -439,7 +458,7 @@ document.getElementById('fs').addEventListener('click',()=>{if(!document.fullscr
 
 window.SCENE_SEEK=(tt)=>{startT=performance.now()/1000-tt;resetScenario();
   // replay kill events up to tt so killfeed matches the seeked time
-  for(let i=0;i<3;i++){ if(tt>=KILL_T[i]){ killsShown=i+1; killfeed.push({a:'KOFFI',b:'SOLDAT '+(i+1),t:KILL_T[i]}); banner="KOFFI — "+(i+1)+(i+1>1?" KILLS":" KILL"); } }
+  for(let i=0;i<3;i++){ if(tt>=KILL_T[i]){ killsShown=i+1; killfeed.push({a:'KOFFI',b:SOL_NAMES[i],t:KILL_T[i]}); banner="KOFFI — "+(i+1)+(i+1>1?" KILLS":" KILL"); } }
 };
 resize();frame();
 </script>
