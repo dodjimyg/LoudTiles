@@ -398,21 +398,6 @@ function drawHUD(t){
       ctx.textAlign="center";ctx.fillStyle="#ffd24a";
       ctx.font=`bold ${Math.round(30*s)}px "Courier New",monospace`;
       ctx.fillText(banner,w*0.5,bar+14*s);ctx.globalAlpha=1; } }
-  // subtitle (bottom, above lower bar)
-  const sb=subAt(t);
-  if(sb){ const age=t-sb[0], fade=Math.min(1,age/0.4)*Math.min(1,(sb[1]-t)/0.4);
-    ctx.globalAlpha=Math.max(0,fade);ctx.textAlign="center";
-    const lines=sb[2].split("\n");
-    ctx.font=`${Math.round(21*s)}px "Courier New",monospace`;
-    let y=h-bar-lines.length*30*s-18*s;
-    // backing
-    ctx.shadowBlur=0;ctx.fillStyle="rgba(0,0,0,0.35)";ctx.fillRect(w*0.12,y-8*s,w*0.76,lines.length*30*s+16*s);ctx.shadowBlur=5*s;
-    for(let i=0;i<lines.length;i++){const big=lines[i]===lines[i].toUpperCase()&&lines[i].length<10;
-      ctx.fillStyle=lines[i].startsWith("«")?"#ffd9a0":"#f3efe6";
-      if(big){ctx.font=`bold ${Math.round(34*s)}px "Courier New",monospace`;}else{ctx.font=`${Math.round(21*s)}px "Courier New",monospace`;}
-      ctx.fillText(lines[i],w*0.5,y+i*30*s);}
-    ctx.globalAlpha=1;
-  }
   // small stream tag
   ctx.textAlign="left";ctx.fillStyle="rgba(240,235,225,0.5)";ctx.font=`${Math.round(12*s)}px "Courier New",monospace`;
   ctx.fillText("LOUDTILES // aggr0 drlft",20*s,bar+12*s);
