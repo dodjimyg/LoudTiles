@@ -7,9 +7,23 @@ palmiers, voiture en feu, et un **héros accroupi** au premier plan (grosse
 afro, lunettes blanches, camo, gilet tactique « BABY INVASION »), le tout sous
 un **HUD de jeu vidéo** façon livestream FPS.
 
-Tout est procédural et tient dans un seul fichier (`index.html`), en **WebGL
-brut** — aucune dépendance, aucune connexion réseau. Ouvre le fichier dans un
-navigateur.
+Tout est procédural, en **WebGL brut** — aucune dépendance, aucune connexion
+réseau. Ouvre les fichiers dans un navigateur.
+
+## Fichiers
+
+- **`index.html`** — le film temps réel (rue de motel + héros + HUD).
+- **`character.html`** — le **visualiseur 3D du personnage principal** :
+  orbite à la souris (glisser = tourner, molette = zoom), rotation
+  automatique, mode **fil de fer**, mode **thermique**, **export `.OBJ` +
+  `.MTL`** (pour ouvrir le modèle dans Blender / tout logiciel 3D), et photo.
+- **`hero.js`** — le **modèle 3D du héros** et les primitives partagées
+  (source unique utilisée par le film et par le visualiseur), plus le GLSL des
+  matériaux. Le personnage y est construit à partir de boîtes et de sphères :
+  tête (mâchoire, nez), afro volumineuse, lunettes blanches (monture + verres
+  teintés + branches), shemagh, tee camo à manches, gilet plaque avec pouches,
+  sac à dos + antenne radio, avant-bras tatoués, pantalon cargo à genouillères,
+  rangers. Pose : accroupi, poings aux joues (la signature des références).
 
 > Le personnage est une **silhouette stylisée low-poly** construite à partir de
 > primitives (boîtes + sphères), pas la reproduction photographique d'une
@@ -40,7 +54,7 @@ navigateur.
 
 ## Utilisation
 
-Ouvre `index.html` dans un navigateur récent (Chrome / Edge / Safari).
+**Le film** — ouvre `index.html` dans un navigateur récent (Chrome / Edge / Safari).
 
 - **● Rec** — enregistre la scène et télécharge un fichier `.mp4`
   (ou `.webm` selon le navigateur). Reclique pour arrêter.
@@ -48,6 +62,10 @@ Ouvre `index.html` dans un navigateur récent (Chrome / Edge / Safari).
 - **Thermique [T]** — bascule la vision infrarouge (ou touche `T`).
 - **Plein écran** — bascule en plein écran.
 - Bouge la souris pour incliner légèrement le regard.
+
+**Le modèle 3D** — ouvre `character.html` : glisse pour tourner autour du
+personnage, molette pour zoomer, et **Export .OBJ** pour récupérer le modèle
+(`.obj` + `.mtl`) et l'ouvrir dans Blender, Cinema 4D, Unity, etc.
 
 ## Pistes d'extension
 

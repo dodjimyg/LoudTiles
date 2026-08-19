@@ -33,6 +33,7 @@
 </div>
 <div id="hint">LOUDTILES · aggr0 drlft · T = vision thermique</div>
 
+<script src="hero.js"></script>
 <script>
 /* =========================================================================
    LOUDTILES // aggr0 drlft
@@ -82,49 +83,12 @@ const M={
     return[x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-dot(x,e),-dot(y,e),-dot(z,e),1];}
 };
 
-//////////////////// geometry buffers ////////////////////
-const POS=[],NRM=[],MAT=[];
-function pushTri(a,b,c,n,m){POS.push(a[0],a[1],a[2],b[0],b[1],b[2],c[0],c[1],c[2]);
-  for(let i=0;i<3;i++){NRM.push(n[0],n[1],n[2]);MAT.push(m);}}
-// box with optional 3x3 rotation (row-major columns = basis)
+//////////////////// geometry (env + hero via shared builder in hero.js) //////
+const {AS,SKIN,CAMO,GEAR,HAIR,GLASS,NEON,CONC,LEAF,BURN,SCARF,TRUNK}=MATID;
 function m3v(R,v){return R?[R[0]*v[0]+R[1]*v[1]+R[2]*v[2],R[3]*v[0]+R[4]*v[1]+R[5]*v[2],R[6]*v[0]+R[7]*v[1]+R[8]*v[2]]:v;}
-function boxT(c,s,m,R){
-  const hx=s[0]/2,hy=s[1]/2,hz=s[2]/2;
-  const faces=[
-    [[1,0,0],[[hx,-hy,-hz],[hx,hy,-hz],[hx,hy,hz],[hx,-hy,hz]]],
-    [[-1,0,0],[[-hx,-hy,hz],[-hx,hy,hz],[-hx,hy,-hz],[-hx,-hy,-hz]]],
-    [[0,1,0],[[-hx,hy,-hz],[-hx,hy,hz],[hx,hy,hz],[hx,hy,-hz]]],
-    [[0,-1,0],[[-hx,-hy,hz],[-hx,-hy,-hz],[hx,-hy,-hz],[hx,-hy,hz]]],
-    [[0,0,1],[[-hx,-hy,hz],[hx,-hy,hz],[hx,hy,hz],[-hx,hy,hz]]],
-    [[0,0,-1],[[hx,-hy,-hz],[-hx,-hy,-hz],[-hx,hy,-hz],[hx,hy,-hz]]],
-  ];
-  for(const[n0,q0]of faces){
-    const n=norm(m3v(R,n0));
-    const q=q0.map(v=>add(c,m3v(R,v)));
-    pushTri(q[0],q[1],q[2],n,m); pushTri(q[0],q[2],q[3],n,m);
-  }
-}
-function box(cx,cy,cz,sx,sy,sz,m){boxT([cx,cy,cz],[sx,sy,sz],m,null);}
-// limb: oriented box from p0 to p1
-function limb(p0,p1,r,m){
-  const d=sub(p1,p0),L=len(d),zc=norm(d);
-  let up=Math.abs(zc[1])>0.9?[1,0,0]:[0,1,0];
-  const xc=norm(cross(up,zc)),yc=cross(zc,xc);
-  const R=[xc[0],yc[0],zc[0],xc[1],yc[1],zc[1],xc[2],yc[2],zc[2]];
-  boxT([(p0[0]+p1[0])/2,(p0[1]+p1[1])/2,(p0[2]+p1[2])/2],[r*2,r*2,L],m,R);
-}
-function sphere(cx,cy,cz,r,m,LA=6,LO=9){
-  for(let i=0;i<LA;i++){for(let j=0;j<LO;j++){
-    const t0=i/LA*Math.PI,t1=(i+1)/LA*Math.PI,p0=j/LO*2*Math.PI,p1=(j+1)/LO*2*Math.PI;
-    const P=(t,p)=>[Math.sin(t)*Math.cos(p),Math.cos(t),Math.sin(t)*Math.sin(p)];
-    const a=P(t0,p0),b=P(t1,p0),c=P(t1,p1),d=P(t0,p1);
-    const V=v=>[cx+v[0]*r,cy+v[1]*r,cz+v[2]*r];
-    pushTri(V(a),V(b),V(c),a,m); pushTri(V(a),V(c),V(d),a,m);
-  }}
-}
-
-// material ids
-const AS=0,SKIN=1,CAMO=2,GEAR=3,HAIR=4,GLASS=5,NEON=6,CONC=7,LEAF=8,BURN=9,SCARF=10,TRUNK=11;
+const g=Geo();
+const {box,boxT,limb,sphere}=g;
+const pushTri=g.tri;
 
 //////////////////// build the world ////////////////////
 // ground
@@ -185,55 +149,11 @@ for(let i=0;i<14;i++){
       Math.random()<0.5?BURN:CONC);
 }
 
-//////////////////// HERO (stylised low-poly) ////////////////////
-(function hero(){
-  const O=[0,0,0.1]; const T=(p)=>[O[0]+p[0],O[1]+p[1],O[2]+p[2]];
-  // legs (crouch): ankle -> knee -> hip
-  for(const s of[-1,1]){
-    const ankle=T([s*0.2,0.09,0.18]), knee=T([s*0.24,0.62,0.36]), hip=T([s*0.16,0.68,-0.02]);
-    box(ankle[0],0.08,ankle[2]+0.1, 0.19,0.16,0.42, GEAR);  // boot
-    limb(ankle,knee,0.11,CAMO);   // shin (pants)
-    limb(knee,hip,0.13,CAMO);     // thigh
-    sphere(knee[0],knee[1],knee[2],0.13,CAMO,5,7); // knee
-  }
-  // pelvis + torso (leaning forward)
-  box(O[0],O[1]+0.68,O[2]-0.02, 0.52,0.24,0.36, GEAR);
-  const pelT=T([0,0.8,0.0]), neck=T([0,1.28,0.08]);
-  limb(pelT,neck,0.25,CAMO);              // torso (tee)
-  boxT([O[0],O[1]+1.02,O[2]+0.2],[0.46,0.5,0.16],GEAR,
-       [1,0,0, 0,Math.cos(-0.12),-Math.sin(-0.12), 0,Math.sin(-0.12),Math.cos(-0.12)]); // vest plate
-  // shoulder straps
-  limb(T([-0.16,1.22,0.14]),T([-0.16,0.85,0.2]),0.05,GEAR);
-  limb(T([0.16,1.22,0.14]),T([0.16,0.85,0.2]),0.05,GEAR);
-  // BABY INVASION patch
-  box(T([0.27,1.12,0.15])[0],T([0.27,1.12,0.15])[1],T([0.27,1.12,0.15])[2],0.11,0.07,0.03,CONC);
-  // scarf / bandana
-  sphere(neck[0],neck[1]+0.02,neck[2]+0.06,0.17,SCARF,5,8);
-  // shoulders
-  for(const s of[-1,1]) sphere(T([s*0.3,1.2,0.06])[0],T([s*0.3,1.2,0.06])[1],T([s*0.3,1.2,0.06])[2],0.13,CAMO,5,7);
-  // arms: shoulder -> elbow(on knee) -> hand(at face)  [the "fists at face" pose]
-  for(const s of[-1,1]){
-    const sh=T([s*0.3,1.2,0.06]), el=T([s*0.26,0.64,0.4]), hand=T([s*0.14,1.2,0.34]);
-    limb(sh,el,0.09,CAMO);   // upper arm (sleeve)
-    limb(el,hand,0.075,SKIN);// forearm (tattooed skin)
-    sphere(hand[0],hand[1],hand[2],0.1,SKIN,5,7); // fist
-    sphere(el[0],el[1],el[2],0.09,SKIN,4,6);
-  }
-  // neck + head (slightly bowed)
-  const head=T([0,1.5,0.1]);
-  limb(neck,head,0.09,SKIN);
-  sphere(head[0],head[1],head[2],0.18,SKIN,7,10);
-  // white sunglasses
-  boxT([head[0],head[1]+0.02,head[2]+0.17],[0.36,0.09,0.06],GLASS,null);
-  box(head[0],head[1]+0.02,head[2]+0.14,0.09,0.05,0.05,GLASS); // bridge glint
-  // afro (big cluster — the silhouette)
-  const puffs=[[0,0.22,0],[0.2,0.16,0.02],[-0.2,0.16,0.02],[0.13,0.1,-0.16],[-0.13,0.1,-0.16],
-    [0.24,0.02,-0.04],[-0.24,0.02,-0.04],[0.1,0.26,-0.06],[-0.1,0.26,-0.06],[0,0.14,-0.2],[0.18,0.2,-0.12],[-0.18,0.2,-0.12]];
-  for(const p of puffs) sphere(head[0]+p[0],head[1]+p[1],head[2]+p[2],0.155,HAIR,5,7);
-})();
+//////////////////// HERO (detailed model from hero.js) ////////////////////
+buildHero(g,[0,0,0.1]);
 
-const posArr=new Float32Array(POS), nrmArr=new Float32Array(NRM), matArr=new Float32Array(MAT);
-const VCOUNT=POS.length/3;
+const posArr=new Float32Array(g.pos), nrmArr=new Float32Array(g.nrm), matArr=new Float32Array(g.mat);
+const VCOUNT=g.pos.length/3;
 const bPos=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,bPos); gl.bufferData(gl.ARRAY_BUFFER,posArr,gl.STATIC_DRAW);
 const bNrm=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,bNrm); gl.bufferData(gl.ARRAY_BUFFER,nrmArr,gl.STATIC_DRAW);
 const bMat=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,bMat); gl.bufferData(gl.ARRAY_BUFFER,matArr,gl.STATIC_DRAW);
@@ -258,30 +178,9 @@ attribute vec3 aPos; attribute vec3 aNrm; attribute float aMat;
 uniform mat4 uVP; varying vec3 vW; varying vec3 vN; varying float vM;
 void main(){vW=aPos; vN=aNrm; vM=aMat; gl_Position=uVP*vec4(aPos,1.0);}`,
 `precision highp float;
-`+NOISE+`
 varying vec3 vW; varying vec3 vN; varying float vM;
 uniform vec3 uCam; uniform vec3 uSun; uniform vec3 uSky; uniform float uTime;
-vec3 camoCol(vec3 p){float a=noise3(p*3.5),b=noise3(p*8.0+5.0);
- vec3 c=mix(vec3(0.20,0.22,0.13),vec3(0.40,0.36,0.24),step(0.45,a));
- return mix(c,vec3(0.09,0.10,0.07),step(0.62,b));}
-vec3 skinCol(vec3 p){vec3 s=vec3(0.70,0.50,0.39);
- float t=noise3(p*11.0),m=smoothstep(0.55,0.62,noise3(p*5.0))*smoothstep(0.55,0.48,t);
- return mix(s,vec3(0.10,0.10,0.13),m*0.85);}
-void material(float m,vec3 p,out vec3 alb,out vec3 emi){
- emi=vec3(0.0);
- if(m<0.5){float pud=smoothstep(0.5,0.78,noise3(p*0.7));alb=mix(vec3(0.055,0.055,0.062),vec3(0.02,0.02,0.028),pud);emi=uSky*pud*0.30;}
- else if(m<1.5){alb=skinCol(p);}
- else if(m<2.5){alb=camoCol(p);}
- else if(m<3.5){alb=vec3(0.035,0.035,0.04);}
- else if(m<4.5){alb=vec3(0.03,0.026,0.022);}
- else if(m<5.5){alb=vec3(0.9,0.93,1.0);emi=vec3(0.35,0.4,0.5);}
- else if(m<6.5){float f=0.7+0.3*sin(uTime*8.0+p.y*3.0);alb=vec3(0.5,0.05,0.04);emi=vec3(1.7,0.13,0.06)*f;}
- else if(m<7.5){alb=vec3(0.42,0.42,0.44);}
- else if(m<8.5){alb=vec3(0.05,0.075,0.045);}
- else if(m<9.5){float e=smoothstep(0.55,0.9,noise3(p*4.0+uTime*0.6));alb=vec3(0.03,0.028,0.026);emi=vec3(1.5,0.4,0.05)*e*0.7;}
- else if(m<10.5){alb=mix(vec3(0.5,0.45,0.32),vec3(0.1,0.09,0.08),step(0.5,noise3(p*22.0)));}
- else{alb=vec3(0.28,0.23,0.17);}
-}
+`+MAT_GLSL+`
 void main(){
  vec3 N=normalize(vN),V=normalize(uCam-vW);
  vec3 alb,emi; material(vM,vW,alb,emi);

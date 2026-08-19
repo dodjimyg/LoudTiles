@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LOUDTILES — modèle 3D du héros</title>
+<style>
+  :root{color-scheme:dark;}
+  html,body{margin:0;height:100%;background:#0c0d10;overflow:hidden;font-family:"Courier New",ui-monospace,monospace;}
+  #c{position:fixed;inset:0;width:100%;height:100%;display:block;cursor:grab;}
+  #c:active{cursor:grabbing;}
+  #ui{position:fixed;left:12px;top:12px;z-index:10;display:flex;flex-wrap:wrap;gap:8px;max-width:70vw;}
+  #ui button{background:#000000aa;border:1px solid #ffffff2e;color:#e8e2d6;padding:7px 11px;
+     font:12px "Courier New",monospace;letter-spacing:.06em;cursor:pointer;border-radius:3px;text-transform:uppercase;}
+  #ui button:hover{background:#ffffff1c;}
+  #ui button.on{border-color:#ffb060;color:#ffce9a;}
+  #title{position:fixed;right:14px;top:12px;z-index:10;text-align:right;color:#cfd6e0;}
+  #title b{font-size:15px;letter-spacing:.12em;}
+  #title span{display:block;font-size:11px;color:#8b93a0;letter-spacing:.1em;margin-top:3px;}
+  #hint{position:fixed;left:12px;bottom:10px;z-index:10;font-size:11px;color:#7a828f;letter-spacing:.06em;}
+  #status{position:fixed;right:14px;bottom:10px;z-index:10;font-size:11px;color:#9aa2b0;}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">
+  <button id="rot" class="on">↻ Rotation</button>
+  <button id="wire">Fil de fer</button>
+  <button id="therm">Thermique</button>
+  <button id="reset">Recentrer</button>
+  <button id="obj">Export .OBJ</button>
+  <button id="png">Photo</button>
+</div>
+<div id="title"><b>HÉRO // LOUDTILES</b><span>modèle 3D · glisser = tourner · molette = zoom</span></div>
+<div id="hint">aggr0 drlft — personnage principal</div>
+<div id="status"></div>
+
+<script src="hero.js"></script>
+<script>
+const cv=document.getElementById('c');
+const gl=cv.getContext('webgl',{antialias:true,preserveDrawingBuffer:true,alpha:false});
+let W,H,DPR;
+function resize(){DPR=Math.min(window.devicePixelRatio||1,2);
+  W=cv.width=Math.floor(innerWidth*DPR);H=cv.height=Math.floor(innerHeight*DPR);
+  cv.style.width=innerWidth+'px';cv.style.height=innerHeight+'px';gl.viewport(0,0,W,H);}
+addEventListener('resize',resize);
+
+function sh(t,s){const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);
+  if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(o)+"\n"+s);return o;}
+function prog(v,f){const p=gl.createProgram();gl.attachShader(p,sh(gl.VERTEX_SHADER,v));
+  gl.attachShader(p,sh(gl.FRAGMENT_SHADER,f));gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));return p;}
+
+// mat4
+const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],
+ dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],len=a=>Math.hypot(a[0],a[1],a[2]),norm=a=>{const l=len(a)||1;return[a[0]/l,a[1]/l,a[2]/l];};
+const mul=(a,b)=>{const o=new Array(16);for(let r=0;r<4;r++)for(let c=0;c<4;c++){let s=0;for(let k=0;k<4;k++)s+=a[k*4+c]*b[r*4+k];o[r*4+c]=s;}return o;};
+const persp=(f,as,n,fr)=>{const t=1/Math.tan(f/2);return[t/as,0,0,0,0,t,0,0,0,0,(fr+n)/(n-fr),-1,0,0,(2*fr*n)/(n-fr),0];};
+const lookAt=(e,c,u)=>{const z=norm(sub(e,c)),x=norm(cross(u,z)),y=cross(z,x);
+  return[x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-dot(x,e),-dot(y,e),-dot(z,e),1];};
+
+// ---- build the hero model ----
+const g=Geo(); buildHero(g,[0,0,0]);
+const VC=g.pos.length/3;
+const bPos=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,bPos);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(g.pos),gl.STATIC_DRAW);
+const bNrm=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,bNrm);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(g.nrm),gl.STATIC_DRAW);
+const bMat=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,bMat);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(g.mat),gl.STATIC_DRAW);
+// barycentric for wireframe
+const bary=new Float32Array(VC*3);
+for(let i=0;i<VC;i+=3){bary.set([1,0,0, 0,1,0, 0,0,1],i*3);}
+const bBary=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,bBary);gl.bufferData(gl.ARRAY_BUFFER,bary,gl.STATIC_DRAW);
+
+// ---- shaded program ----
+const shaded=prog(`
+attribute vec3 aPos,aNrm; attribute float aMat;
+uniform mat4 uVP; varying vec3 vW,vN; varying float vM;
+void main(){vW=aPos;vN=aNrm;vM=aMat;gl_Position=uVP*vec4(aPos,1.0);}`,
+`precision highp float;
+varying vec3 vW,vN; varying float vM;
+uniform vec3 uCam,uSky; uniform float uTime;
+`+MAT_GLSL+`
+void main(){
+ vec3 N=normalize(vN),V=normalize(uCam-vW);
+ vec3 alb,emi; material(vM,vW,alb,emi);
+ vec3 key=normalize(vec3(-0.45,0.75,0.55));
+ vec3 fill=normalize(vec3(0.75,0.25,0.35));
+ vec3 rim=normalize(vec3(0.15,0.45,-0.85));
+ float kd=max(dot(N,key),0.0), fd=max(dot(N,fill),0.0), rd=pow(max(dot(N,rim),0.0),2.0);
+ vec3 col=alb*(vec3(0.16,0.17,0.20)+vec3(1.0,0.92,0.78)*kd*1.55+vec3(0.30,0.40,0.55)*fd*0.55)+emi;
+ col+=vec3(1.0,0.86,0.62)*rd*0.55;
+ float br=clamp(max(max(col.r,col.g),col.b)-0.85,0.0,1.0)+clamp(dot(emi,vec3(0.5)),0.0,1.0);
+ gl_FragColor=vec4(col,clamp(br,0.0,1.0));
+}`);
+const shL={aPos:gl.getAttribLocation(shaded,'aPos'),aNrm:gl.getAttribLocation(shaded,'aNrm'),aMat:gl.getAttribLocation(shaded,'aMat'),
+ uVP:gl.getUniformLocation(shaded,'uVP'),uCam:gl.getUniformLocation(shaded,'uCam'),uSky:gl.getUniformLocation(shaded,'uSky'),uTime:gl.getUniformLocation(shaded,'uTime')};
+
+// ---- wire program ----
+const wire=prog(`attribute vec3 aPos; attribute vec3 aBary; uniform mat4 uVP; varying vec3 vB;
+void main(){vB=aBary;gl_Position=uVP*vec4(aPos,1.0);}`,
+`precision highp float; varying vec3 vB;
+void main(){ float d=min(min(vB.x,vB.y),vB.z);
+ float e=1.0-smoothstep(0.0,0.03,d); if(e<0.05)discard;
+ gl_FragColor=vec4(vec3(0.6,0.85,1.0)*e,e);}`);
+const wL={aPos:gl.getAttribLocation(wire,'aPos'),aBary:gl.getAttribLocation(wire,'aBary'),uVP:gl.getUniformLocation(wire,'uVP')};
+
+// ---- ground ----
+const groundBuf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,groundBuf);
+gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-8,0,-8, 8,0,-8, 8,0,8, -8,0,-8, 8,0,8, -8,0,8]),gl.STATIC_DRAW);
+const gp=prog(`attribute vec3 p;uniform mat4 uVP;varying vec3 w;void main(){w=p;gl_Position=uVP*vec4(p,1.0);}`,
+`precision highp float;varying vec3 w;
+void main(){float rr=length(w.xz);
+ float grid=step(0.96,max(fract(w.x),fract(w.z)));
+ vec3 base=mix(vec3(0.11,0.12,0.14),vec3(0.05,0.055,0.065),smoothstep(1.0,7.0,rr));
+ base=mix(base,vec3(0.16,0.17,0.19),grid*0.25);
+ float sh=1.0-exp(-max(rr-0.2,0.0)*max(rr-0.2,0.0)*2.5); // contact shadow under model
+ base*=mix(0.25,1.0,sh);
+ gl_FragColor=vec4(base,1.0);}`);
+const gL={p:gl.getAttribLocation(gp,'p'),uVP:gl.getUniformLocation(gp,'uVP')};
+
+// ---- background + post ----
+const fsq=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,fsq);
+gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,1,1,-1,-1,1,1,-1,1]),gl.STATIC_DRAW);
+const bg=prog(`attribute vec2 p;varying vec2 uv;void main(){uv=p*0.5+0.5;gl_Position=vec4(p,0.9999,1.0);}`,
+`precision highp float;varying vec2 uv;
+void main(){ vec2 d=uv-0.5; float r=length(d);
+ vec3 c=mix(vec3(0.13,0.15,0.19),vec3(0.05,0.055,0.07),smoothstep(0.0,0.9,r));
+ gl_FragColor=vec4(c,1.0);}`);
+const bgL={p:gl.getAttribLocation(bg,'p')};
+
+let fbo,tex,depth;
+function targets(){if(tex)gl.deleteTexture(tex);if(fbo)gl.deleteFramebuffer(fbo);if(depth)gl.deleteRenderbuffer(depth);
+ tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);
+ gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,W,H,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+ gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+ gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+ depth=gl.createRenderbuffer();gl.bindRenderbuffer(gl.RENDERBUFFER,depth);gl.renderbufferStorage(gl.RENDERBUFFER,gl.DEPTH_COMPONENT16,W,H);
+ fbo=gl.createFramebuffer();gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);
+ gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
+ gl.framebufferRenderbuffer(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.RENDERBUFFER,depth);
+ gl.bindFramebuffer(gl.FRAMEBUFFER,null);}
+const post=prog(`attribute vec2 p;varying vec2 uv;void main(){uv=p*0.5+0.5;gl_Position=vec4(p,0.0,1.0);}`,
+`precision highp float;varying vec2 uv;uniform sampler2D uTex;uniform vec2 uRes;uniform float uTime,uThermal;
+vec3 thermal(float t){t=clamp(t,0.0,1.0);
+ vec3 c0=vec3(0.02,0.02,0.06),c1=vec3(0.13,0.02,0.28),c2=vec3(0.55,0.03,0.35),c3=vec3(0.90,0.12,0.05),c4=vec3(1.0,0.45,0.02),c5=vec3(1.0,0.85,0.2),c6=vec3(1.0,1.0,0.98);
+ if(t<0.16)return mix(c0,c1,t/0.16);if(t<0.34)return mix(c1,c2,(t-0.16)/0.18);if(t<0.52)return mix(c2,c3,(t-0.34)/0.18);
+ if(t<0.68)return mix(c3,c4,(t-0.52)/0.16);if(t<0.85)return mix(c4,c5,(t-0.68)/0.17);return mix(c5,c6,(t-0.85)/0.15);}
+float h2(vec2 p){return fract(sin(dot(p,vec2(41.13,289.7)))*43758.5);}
+void main(){vec2 d=uv-0.5;float r2=dot(d,d);
+ vec3 col=texture2D(uTex,uv).rgb;
+ vec3 bloom=vec3(0.0);float bw=0.0;
+ for(int i=-2;i<=2;i++)for(int j=-2;j<=2;j++){vec2 o=vec2(float(i),float(j))/uRes*3.0;vec4 s=texture2D(uTex,uv+o);bloom+=s.rgb*s.a;bw+=s.a;}
+ if(bw>0.0)col+=bloom/bw*clamp(bw*0.08,0.0,1.0)*0.5;
+ if(uThermal>0.5){float l=dot(col,vec3(0.3,0.59,0.11));col=thermal(pow(l,0.8));}
+ col+= (h2(uv*uRes+fract(uTime)*91.0)-0.5)*0.03;
+ col*=smoothstep(1.15,0.15,r2*1.7);
+ gl_FragColor=vec4(pow(max(col,0.0),vec3(0.96)),1.0);}`);
+const poL={p:gl.getAttribLocation(post,'p'),uTex:gl.getUniformLocation(post,'uTex'),uRes:gl.getUniformLocation(post,'uRes'),
+ uTime:gl.getUniformLocation(post,'uTime'),uThermal:gl.getUniformLocation(post,'uThermal')};
+
+// ---- orbit ----
+let theta=0.35, phi=1.48, radius=3.2, autoRot=true, wireOn=false, thermOn=false;
+const target=[0,0.92,0];
+let drag=false,px=0,py=0;
+cv.addEventListener('pointerdown',e=>{drag=true;px=e.clientX;py=e.clientY;cv.setPointerCapture(e.pointerId);});
+cv.addEventListener('pointerup',()=>drag=false);
+cv.addEventListener('pointermove',e=>{if(!drag)return;theta-=(e.clientX-px)*0.008;phi-=(e.clientY-py)*0.008;
+ phi=Math.max(0.15,Math.min(Math.PI-0.15,phi));px=e.clientX;py=e.clientY;});
+cv.addEventListener('wheel',e=>{radius*=(1+Math.sign(e.deltaY)*0.08);radius=Math.max(1.6,Math.min(9,radius));e.preventDefault();},{passive:false});
+document.getElementById('rot').onclick=e=>{autoRot=!autoRot;e.target.classList.toggle('on',autoRot);};
+document.getElementById('wire').onclick=e=>{wireOn=!wireOn;e.target.classList.toggle('on',wireOn);};
+document.getElementById('therm').onclick=e=>{thermOn=!thermOn;e.target.classList.toggle('on',thermOn);};
+document.getElementById('reset').onclick=()=>{theta=0.35;phi=1.48;radius=3.2;};
+
+// ---- render ----
+const SKY=[0.5,0.5,0.55];
+let t0=performance.now()/1000;
+function draw(){
+ const now=performance.now()/1000,time=now-t0;
+ if(autoRot&&!drag)theta+=0.006;
+ const eye=[target[0]+radius*Math.sin(phi)*Math.sin(theta),target[1]+radius*Math.cos(phi),target[2]+radius*Math.sin(phi)*Math.cos(theta)];
+ const VP=mul(persp(0.9,W/H,0.05,60),lookAt(eye,target,[0,1,0]));
+
+ gl.bindFramebuffer(gl.FRAMEBUFFER,fbo);gl.viewport(0,0,W,H);
+ gl.clearColor(0.08,0.09,0.11,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+ // bg
+ gl.disable(gl.DEPTH_TEST);gl.depthMask(false);
+ gl.useProgram(bg);gl.bindBuffer(gl.ARRAY_BUFFER,fsq);gl.enableVertexAttribArray(bgL.p);gl.vertexAttribPointer(bgL.p,2,gl.FLOAT,false,0,0);
+ gl.drawArrays(gl.TRIANGLES,0,6);
+ // ground
+ gl.enable(gl.DEPTH_TEST);gl.depthMask(true);
+ gl.useProgram(gp);gl.uniformMatrix4fv(gL.uVP,false,VP);
+ gl.bindBuffer(gl.ARRAY_BUFFER,groundBuf);gl.enableVertexAttribArray(gL.p);gl.vertexAttribPointer(gL.p,3,gl.FLOAT,false,0,0);
+ gl.drawArrays(gl.TRIANGLES,0,6);
+ // model
+ gl.useProgram(shaded);gl.uniformMatrix4fv(shL.uVP,false,VP);
+ gl.uniform3fv(shL.uCam,eye);gl.uniform3fv(shL.uSky,SKY);gl.uniform1f(shL.uTime,time);
+ gl.bindBuffer(gl.ARRAY_BUFFER,bPos);gl.enableVertexAttribArray(shL.aPos);gl.vertexAttribPointer(shL.aPos,3,gl.FLOAT,false,0,0);
+ gl.bindBuffer(gl.ARRAY_BUFFER,bNrm);gl.enableVertexAttribArray(shL.aNrm);gl.vertexAttribPointer(shL.aNrm,3,gl.FLOAT,false,0,0);
+ gl.bindBuffer(gl.ARRAY_BUFFER,bMat);gl.enableVertexAttribArray(shL.aMat);gl.vertexAttribPointer(shL.aMat,1,gl.FLOAT,false,0,0);
+ gl.drawArrays(gl.TRIANGLES,0,VC);
+ // wireframe overlay
+ if(wireOn){gl.useProgram(wire);gl.uniformMatrix4fv(wL.uVP,false,VP);
+  gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthFunc(gl.LEQUAL);
+  gl.bindBuffer(gl.ARRAY_BUFFER,bPos);gl.enableVertexAttribArray(wL.aPos);gl.vertexAttribPointer(wL.aPos,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER,bBary);gl.enableVertexAttribArray(wL.aBary);gl.vertexAttribPointer(wL.aBary,3,gl.FLOAT,false,0,0);
+  gl.drawArrays(gl.TRIANGLES,0,VC);gl.disable(gl.BLEND);}
+
+ // post to screen
+ gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,W,H);gl.disable(gl.DEPTH_TEST);
+ gl.useProgram(post);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,tex);
+ gl.uniform1i(poL.uTex,0);gl.uniform2f(poL.uRes,W,H);gl.uniform1f(poL.uTime,time);gl.uniform1f(poL.uThermal,thermOn?1:0);
+ gl.bindBuffer(gl.ARRAY_BUFFER,fsq);gl.enableVertexAttribArray(poL.p);gl.vertexAttribPointer(poL.p,2,gl.FLOAT,false,0,0);
+ gl.drawArrays(gl.TRIANGLES,0,6);
+ requestAnimationFrame(draw);
+}
+
+// ---- OBJ / MTL export ----
+const MTLCOL={0:[.05,.05,.06],1:[.70,.50,.39],2:[.30,.31,.20],3:[.05,.05,.05],4:[.03,.026,.022],5:[.90,.93,1.0],
+ 6:[.60,.05,.04],7:[.42,.42,.44],8:[.05,.075,.045],9:[.03,.03,.03],10:[.42,.37,.26],11:[.28,.23,.17],
+ 12:[.02,.02,.02],13:[.02,.02,.03],14:[.06,.06,.07],15:[.34,.31,.20]};
+const MTLNAME={0:'asphalt',1:'skin',2:'camo',3:'gear',4:'hair',5:'glasses',6:'neon',7:'concrete',8:'foliage',
+ 9:'burnt',10:'scarf',11:'trunk',12:'sole',13:'lens',14:'metal',15:'patch'};
+function dl(name,text){const b=new Blob([text],{type:'text/plain'});const u=URL.createObjectURL(b);
+ const a=document.createElement('a');a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),3000);}
+document.getElementById('obj').onclick=()=>{
+ const st=document.getElementById('status');st.textContent='génération OBJ…';
+ const P=g.pos,N=g.nrm,Mt=g.mat, nt=VC/3;
+ // group triangles by material
+ const order=[...Array(nt).keys()].sort((a,b)=>Mt[a*3]-Mt[b*3]);
+ let v='# LOUDTILES hero — modèle stylisé low-poly\nmtllib loudtiles_hero.mtl\no LoudtilesHero\n';
+ let vn='', f=''; let idx=1, curMat=-1;
+ for(const ti of order){
+   const m=Mt[ti*3];
+   if(m!==curMat){curMat=m;f+='usemtl '+MTLNAME[m]+'\n';}
+   for(let k=0;k<3;k++){const o=(ti*3+k)*3;
+     v+='v '+P[o].toFixed(4)+' '+P[o+1].toFixed(4)+' '+P[o+2].toFixed(4)+'\n';
+     vn+='vn '+N[o].toFixed(3)+' '+N[o+1].toFixed(3)+' '+N[o+2].toFixed(3)+'\n';}
+   f+='f '+idx+'//'+idx+' '+(idx+1)+'//'+(idx+1)+' '+(idx+2)+'//'+(idx+2)+'\n'; idx+=3;
+ }
+ dl('loudtiles_hero.obj', v+vn+f);
+ let mtl='# LOUDTILES hero materials\n';
+ for(const k in MTLNAME){const c=MTLCOL[k];
+   mtl+='newmtl '+MTLNAME[k]+'\nKd '+c[0].toFixed(3)+' '+c[1].toFixed(3)+' '+c[2].toFixed(3)+'\nKa 0.05 0.05 0.05\nKs 0.1 0.1 0.1\nNs 20\n\n';}
+ setTimeout(()=>{dl('loudtiles_hero.mtl',mtl);st.textContent='OBJ + MTL téléchargés ('+nt+' triangles)';},400);
+};
+document.getElementById('png').onclick=()=>{const a=document.createElement('a');a.href=cv.toDataURL('image/png');a.download='hero_'+Date.now()+'.png';a.click();};
+
+resize();targets();addEventListener('resize',()=>{resize();targets();});
+draw();
+</script>
+</body>
+</html>
