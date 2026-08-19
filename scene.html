@@ -405,7 +405,11 @@ let manualThermal=0, startT=performance.now()/1000;
 document.getElementById('therm').addEventListener('click',()=>manualThermal=manualThermal?0:1);
 addEventListener('keydown',e=>{if(e.key==='t'||e.key==='T')manualThermal=manualThermal?0:1;});
 document.getElementById('replay').addEventListener('click',()=>{startT=performance.now()/1000;resetScenario();});
+let CAPTURING=false;
+window.CAPTURE_BEGIN=()=>{CAPTURING=true;resetScenario();};
+window.RENDER_AT=(t)=>{ drawFrame(t); ctx.clearRect(0,0,stage.width,stage.height); ctx.drawImage(glCanvas,0,0,stage.width,stage.height); drawHUD(t); };
 function frame(){
+  if(CAPTURING) return;              // deterministic capture drives RENDER_AT instead
   let t=performance.now()/1000-startT;
   if(t>DUR){ startT=performance.now()/1000; resetScenario(); t=0; } // loop
   drawFrame(t);
